@@ -1,0 +1,4 @@
+telethon>=1.26.0
+spotipy>=2.22.1
+mutagen>=1.46.0
+nest-asyncio>=1.5.6

@@ -1,15 +1,15 @@
 # Music Metadata Handler
 
 **Short description**  
-A Jupyter Notebook based tool to update metadata (title, artist, album, date, track, disc, genre and cover art) for audio files (`.flac`, `.mp3`, `.wav`) using the Spotify API. The notebook creates and edits a temporary copy for each file, sends the original file to the system trash, and replaces the original with the modified copy (original preserved in trash).
+A Jupyter Notebook based tool to update metadata (title, artist, album, date, track, disc, genre and cover art) for audio files (`.flac`, `.mp3`, `.wav`) using the Spotify API. The notebook creates and edits a temporary copy for each file, sends the original file to the system trash (Recycle Bin), and replaces the original with the modified copy.
 
 ---
 
 ## Features
 - Supports FLAC, MP3 (ID3), and WAV (ID3 chunk preferred, otherwise RIFF INFO).
-- Infers artist/title from filename when tags are missing (supports `Artist - Title` and single-hyphen fallback; if no separator, the full filename stem is treated as the title).
+- Infers artist/title from filename when tags are missing (supports `Artist - Title` or `Title - Artist`).
 - Uses ISRC search first when available, otherwise robust normalized containment searches via Spotify (fielded and plain queries).
-- Option to only update genre (safe mode).
+- Option to only update genre.
 - Downloads album art and embeds it for FLAC/MP3 (skips embedding for WAV by default due to inconsistent player support).
 - Processes files ordered by *creation date* when the filesystem exposes it; falls back to modification date where creation time is unavailable.
 - Works interactively inside a Jupyter Notebook (recommended for stepwise testing and safe runs on batches).
@@ -19,13 +19,9 @@ A Jupyter Notebook based tool to update metadata (title, artist, album, date, tr
 ## Requirements
 - Python 3.8+ (recommended)
 - Python packages:
-  - `requests`
-  - `mutagen`
-  - `send2trash`
 
-**Install via pip**
 ```bash
-pip install requests mutagen send2trash
+pip install -r requirements.txt
 ````
 
 **Optional**
@@ -48,7 +44,7 @@ Place a `credentials.json` file in the same folder as the notebook with the foll
 {
   "client_id": "YOUR_SPOTIFY_CLIENT_ID",
   "client_secret": "YOUR_SPOTIFY_CLIENT_SECRET",
-  "music_path": "/path/to/your/music/folder"
+  "music_path": "C:/path/to/your/music/folder"
 }
 ```
 
@@ -61,20 +57,24 @@ Place a `credentials.json` file in the same folder as the notebook with the foll
 
 ## Notebook usage overview
 
-This project is intended to be executed inside a Jupyter Notebook. The notebook approach is recommended because:
-
-* It allows incremental testing on small batches before applying changes to the entire library.
-* You can inspect logs and intermediate results in cells before proceeding.
-* You can modify flags directly in a configuration cell and rerun only the relevant parts.
+Mi Cuchurrufleto — Run this project inside a Jupyter Notebook; if you’re new, open the `.ipynb` in Visual Studio Code, choose the Python/virtualenv kernel with the project's dependencies installed, click **Run All**, and collapse/expand cells via the cell toolbar (ellipsis) on each cell.
 
 ### Typical notebook cell layout
 
-1. **Configuration cell** — set constants such as `CREDENTIALS_PATH`, `RECURSIVE`, `PROCESS_TOP_X`, `UPDATE_ONLY_GENRE`, `OVERWRITE_TITLE_ARTIST_OR_ALBUM`, `PRINT_SEARCH_INFO`, `SEARCH_CANDIDATE_LIMIT`, and `MARKET`.
-2. **Imports & helper functions** — `mutagen`, `requests`, `send2trash`, and utility functions remain as modular cells.
-3. **Spotify authentication cell** — obtains a client credentials token from Spotify.
-4. **File discovery cell** — collects files from `music_path` and sorts them by creation time (with fallback).
-5. **Processing / main loop cell** — iterate files and call the `overwrite_metadata_with_spotify` logic.
-6. **Summary / reporting cell** — prints final counters and any errors to examine.
+1. **Configuration cell** — Put all imports, constants and user-editable flags (`from ... import ...`, `CREDENTIALS_PATH`, `RECURSIVE`, `PROCESS_TOP_X`, endpoint URLs, `REQUEST_TIMEOUT`, `OVERWRITE_TITLE_ARTIST_OR_ALBUM`, `UPDATE_ONLY_GENRE`, `PRINT_SEARCH_INFO`, `SEARCH_CANDIDATE_LIMIT`, `MARKET`, and `logging.basicConfig`).
+   **Justification:** Centralizing configuration and imports in one cell makes it trivial to change runtime behavior and ensures the selected kernel/environment has the required packages before running any logic cells.
+2. **MUSIC UTILITIES SECTION** — Include filename parsing and filesystem helpers (`_FILENAME_SPLIT_RE`, `infer_artist_title_from_filename`, `unique_temp_copy`, `send_original_to_trash`).
+   **Justification:** These are pure local utilities (no network). Keeping them isolated allows quick unit tests on filename inference and temp-copy behavior without invoking Spotify or tag-writing logic.
+3. **SEARCH UTILITIES SECTION** — Place all normalization and token-matching helpers (`_strip_parentheses_with_feat`, `_extract_remixer_tokens_from_title`, `_normalize_text_basic`, `_normalize_artist_for_search`, `_normalize_title_for_search`, `_tokens`, `_tokens_in_candidate`, `_build_sanitized_query`).
+   **Justification:** Search normalization is core to match correctness; grouping it makes it easy to tweak sanitization rules and re-run only the search logic during debugging.
+4. **SPOTIFY CLIENT / SEARCH SECTION** — Add Spotify HTTP wrappers and search logic (`get_spotify_token`, `spotifysearch`, `spotify_get_artist_albums`, `spotify_get_album_tracks`, `spotify_find_best_match`).
+   **Justification:** Network/auth logic should be separated so you can refresh tokens or re-run queries independently and inspect raw Spotify responses without touching file I/O.
+5. **TAG WRITING / FORMAT-SPECIFIC HANDLERS** — Put format-specific read/write functions (`download_image_bytes`, `get_artist_genres`, `remove_existing_pictures_generic`, `set_genre_on_audio`, `add_picture_to_audio`).
+   **Justification:** Tag I/O is potentially destructive; isolating these functions lets you test them safely on single sample files before running bulk operations.
+6. **CORE: update metadata for a single file (handles FLAC/MP3/WAV)** — Include the worker function `overwrite_metadata_with_spotify(file_path, token)` (the full read → search → write flow for one file).
+   **Justification:** Having the core worker in one cell makes single-file manual invocation easy (e.g., call it on a test path), enabling iterative verification of behavior before mass processing.
+7. **FILE ITERATION + MAIN** — Add `iter_audio_files`, `get_creation_time`, the orchestration `main()` (load credentials, obtain token, build `paths`, sort by creation time fallback to mtime, loop and call worker), and the `if __name__ == "__main__": main()` guard.
+   **Justification:** This cell runs the end-to-end pipeline; keep it last so all helpers and network functions are defined. It’s the only cell you need to modify minimally (e.g., `PROCESS_TOP_X`) to control a full run.
 
 **Running the notebook**
 
@@ -166,7 +166,6 @@ jupyter lab
 ## To do (known problems)
 
 * Problem with some .WAV not being correctly handled.
-* Add metada just with the filename.
 * Cell segmentation.
 
 ---

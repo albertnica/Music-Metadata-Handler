@@ -1,7 +1,11 @@
 # Music Metadata Handler
 
 **Short description**  
-A Jupyter Notebook based tool to update metadata (title, artist, album, date, track, disc, genre and cover art) for audio files (`.flac`, `.mp3`, `.wav`) using the Spotify API. The notebook creates and edits a temporary copy for each file, sends the original file to the system trash (Recycle Bin), and replaces the original with the modified copy.
+A Jupyter Notebook based tool to update metadata (title, artist, album, date, track, disc, genre and cover art) for audio files (`.flac`, `.mp3`, `.wav`) using the Spotify API. The notebook creates and edits a temporary copy for each file, sends the original file to the system trash (Recycle Bin), and replaces the original with the modified copy. For WAV support, the script writes both RIFF `LIST/INFO` tags **and** an `id3 ` chunk (ID3v2.3 with APIC + textual frames encoded in UTF-16) to maximize compatibility with tag editors such as MP3tag.
+
+**Disclaimer:** Windows Explorer may not display WAV metadata natively. Use a dedicated tag editor such as **Mp3tag** to view and verify WAV metadata. It is recommended to convert the music files to **FLAC** and work with FLACs for long-term tagging and library management when possible.
+
+**MP3 bug:** If you do not see MP3 metadata on Windows Explorer after running the program, open all the files processed with **Mp3tag**, select them (**Ctrl + Alt**) and save (**Ctrl + S**).
 
 ---
 
@@ -10,7 +14,7 @@ A Jupyter Notebook based tool to update metadata (title, artist, album, date, tr
 - Infers artist/title from filename when tags are missing (supports `Artist - Title` or `Title - Artist`).
 - Uses ISRC search first when available, otherwise robust normalized containment searches via Spotify (fielded and plain queries).
 - Option to only update genre.
-- Downloads album art and embeds it for FLAC/MP3 (skips embedding for WAV by default due to inconsistent player support).
+- Downloads album art and embeds it for FLAC/MP3/WAV.
 - Processes files ordered by *creation date* when the filesystem exposes it; falls back to modification date where creation time is unavailable.
 - Works interactively inside a Jupyter Notebook (recommended for stepwise testing and safe runs on batches).
 
@@ -76,26 +80,13 @@ Mi Cuchurrufleto — Run this project inside a Jupyter Notebook; if you’re new
 7. **FILE ITERATION + MAIN** — Add `iter_audio_files`, `get_creation_time`, the orchestration `main()` (load credentials, obtain token, build `paths`, sort by creation time fallback to mtime, loop and call worker), and the `if __name__ == "__main__": main()` guard.
    **Justification:** This cell runs the end-to-end pipeline; keep it last so all helpers and network functions are defined. It’s the only cell you need to modify minimally (e.g., `PROCESS_TOP_X`) to control a full run.
 
-**Running the notebook**
-
-* Open the notebook with Jupyter:
-
-```bash
-jupyter notebook
-# or for Jupyter Lab:
-jupyter lab
-```
-
-* Edit the configuration cell to point to your `credentials.json` and set flags.
-* Run the configuration and helper cells first, then the authentication and main processing cells.
-* Start with `PROCESS_TOP_X = 10` or `UPDATE_ONLY_GENRE = 1` to test safely before scaling.
-
 ---
 
 ## Configuration options explained
 
 * `RECURSIVE` (`True`/`False`): search for files recursively in subfolders.
-* `PROCESS_TOP_X` (int): number of files to process in this run. Useful to test with small batches.
+* `FILENAME_PARSE_MODE` (`1`/`0`): if 1, it considers `Title - Artist` filename format; if 0, it considers `Artist - Title` filename format.
+* `PROCESS_TOP_X` (int): number of files to process in this run (sorted by creation date). Useful to test with small batches.
 * `OVERWRITE_TITLE_ARTIST_OR_ALBUM` (`1`/`0`): if 1, overwrite title/artist/album using Spotify results; if 0, preserve existing tags.
 * `UPDATE_ONLY_GENRE` (`1`/`0`): if 1, only update genre tags (safe mode).
 * `PRINT_SEARCH_INFO` (`1`/`0`): enable extended debugging/info logs on how queries and matches were performed.
@@ -160,13 +151,6 @@ jupyter lab
 * **Keep backups** of irreplaceable music files.
 * **Use `UPDATE_ONLY_GENRE = 1`** as a minimally-invasive first pass.
 * **Keep credentials.json private**.
-
----
-
-## To do (known problems)
-
-* Problem with some .WAV not being correctly handled.
-* Cell segmentation.
 
 ---
 

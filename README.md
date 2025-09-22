@@ -1,7 +1,7 @@
 # Music Metadata Handler
 
 **Short description**  
-A Jupyter Notebook based tool to update metadata (title, artist, album, date, track, disc, genre and cover art) for audio files (`.flac`, `.mp3`, `.wav`) using the Spotify API. The notebook creates and edits a temporary copy for each file, sends the original file to the system trash (Recycle Bin), and replaces the original with the modified copy. For WAV support, the script writes both RIFF `LIST/INFO` tags **and** an `id3 ` chunk (ID3v2.3 with APIC + textual frames encoded in UTF-16) to maximize compatibility with tag editors such as MP3tag.
+A Jupyter Notebook based tool to update metadata (title, artist, album, date, track, disc, genre and cover art) for audio files (`.flac`, `.mp3`, `.wav`) using the Spotify API. The notebook creates and edits a temporary copy for each file, sends the original file to the system trash (Recycle Bin), and replaces the original with the modified copy. For WAV support, the script writes both RIFF `LIST/INFO` tags **and** an `id3` chunk (ID3v2.3 with APIC + textual frames encoded in UTF-16) to maximize compatibility with tag editors such as MP3tag.
 
 **Disclaimer:** Windows Explorer may not display WAV metadata natively. Use a dedicated tag editor such as **Mp3tag** to view and verify WAV metadata. It is recommended to convert the music files to **FLAC** and work with FLACs for long-term tagging and library management when possible.
 

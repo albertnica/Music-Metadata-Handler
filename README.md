@@ -1,48 +1,38 @@
 # Music Metadata Handler
 
-**Short description**  
-A Jupyter Notebook based tool to update metadata (title, artist, album, date, track, disc, genre and cover art) for audio files (`.flac`, `.mp3`, `.wav`) using the Spotify API. The notebook creates and edits a temporary copy for each file, sends the original file to the system trash (Recycle Bin), and replaces the original with the modified copy. For WAV support, the script writes both RIFF `LIST/INFO` tags **and** an `id3` chunk (ID3v2.3 with APIC + textual frames encoded in UTF-16) to maximize compatibility with tag editors such as MP3tag.
+A command-line and library tool to update audio file metadata (title, artist, album, date, track, disc, genre and cover art) for FLAC, MP3 and WAV files using the Spotify Web API. The project provides:
 
-**Disclaimer:** Windows Explorer may not display WAV metadata natively. Use a dedicated tag editor such as **Mp3tag** to view and verify WAV metadata. It is recommended to convert the music files to **FLAC** and work with FLACs for long-term tagging and library management when possible.
+- A CLI entrypoint: `main.py` (recommended for scripted/batch runs).
+- A modular Python package under `modules/` providing the implementation (search, tag I/O, WAV helpers, filename utils).
 
-**MP3 bug:** If you do not see MP3 metadata on Windows Explorer after running the program, open all the files processed with **Mp3tag**, select them (**Ctrl + Alt**) and save (**Ctrl + S**).
-
----
+This README documents installation, configuration, CLI usage and module responsibilities so you can use the tool as a script or import the modules in your own workflows.
 
 ## Features
-- Supports FLAC, MP3 (ID3), and WAV (ID3 chunk preferred, otherwise RIFF INFO).
-- Infers artist/title from filename when tags are missing (supports `Artist - Title` or `Title - Artist`).
-- Uses ISRC search first when available, otherwise robust normalized containment searches via Spotify (fielded and plain queries).
-- Option to only update genre.
-- Downloads album art and embeds it for FLAC/MP3/WAV.
-- Processes files ordered by *creation date* when the filesystem exposes it; falls back to modification date where creation time is unavailable.
-- Works interactively inside a Jupyter Notebook (recommended for stepwise testing and safe runs on batches).
+- Supports FLAC, MP3 (ID3) and WAV (LIST/INFO + ID3 chunk where applicable).
+- Infers artist/title from filename when tags are missing (supports `Artist - Title` and `Title - Artist` modes).
+- Uses ISRC search first when available; otherwise performs normalized, token-based Spotify searches.
+- Optionally only update genre (safe mode).
+- Downloads and embeds album art for supported formats.
+- Processes files ordered by creation time (falls back to modification time).
 
----
+## Installation
 
-## Requirements
-- Python 3.8+ (recommended)
-- Python packages:
+1. Create and activate a virtual environment (Windows only, recommended):
 
-```bash
-pip install -r requirements.txt
-````
-
-**Optional**
-
-* A virtual environment is recommended to isolate dependencies:
-
-```bash
+```powershell
 python -m venv venv
-source venv/bin/activate   # macOS/Linux
-venv\Scripts\activate      # Windows
+venv\Scripts\Activate.ps1
 ```
 
----
+2. Install dependencies:
 
-## Credentials
+```powershell
+pip install -r requirements.txt
+```
 
-Place a `credentials.json` file in the same folder as the notebook with the following minimal structure:
+## Configuration (`config.py`) and credentials
+
+The repository expects a local `config.py` with runtime flags and endpoint constants — see `config.py` for defaults. The program loads `credentials.json` which must contain your Spotify credentials and optionally a `music_path`. Example `credentials.json`:
 
 ```json
 {
@@ -52,111 +42,49 @@ Place a `credentials.json` file in the same folder as the notebook with the foll
 }
 ```
 
-* `client_id` & `client_secret`: Spotify API credentials (Client Credentials flow).
-* `music_path`: path to the directory with the audio files to update.
+Important config flags in `config.py`:
+- `RECURSIVE` (bool): whether to scan subfolders.
+- `PROCESS_TOP_X` (int): limit number of files to process in one run.
+- `OVERWRITE_TITLE_ARTIST_OR_ALBUM` (0|1): whether to overwrite title/artist/album fields.
+- `UPDATE_ONLY_GENRE` (0|1): if 1, only update genre tags.
+- `PRINT_SEARCH_INFO` (0|1): enable verbose search/debug logs.
+- `SEARCH_CANDIDATE_LIMIT` (int): how many Spotify candidates to consider per file.
+- Endpoint URLs and timeouts are also defined in `config.py`.
 
-**Note:** Keep `credentials.json` secure and do not commit it to public repositories.
+## CLI usage (main.py)
 
----
+`main.py` is the recommended entrypoint for non-interactive runs. Example:
 
-## Notebook usage overview
+```bash
+python main.py --music-path "C:/Music" --process-top-x 20 --recursive
+```
 
-Mi Cuchurrufleto — Run this project inside a Jupyter Notebook; if you’re new, open the `.ipynb` in Visual Studio Code, choose the Python/virtualenv kernel with the project's dependencies installed, click **Run All**, and collapse/expand cells via the cell toolbar (ellipsis) on each cell.
+Available flags (short explanation):
+- `--music-path <path>`: override `music_path` from `credentials.json`.
+- `--process-top-x <int>`: number of files to process in this run (overrides `config.PROCESS_TOP_X`).
+- `--recursive`: scan subfolders (flag; present => True, absent => False).
+- `--overwrite-taa`: overwrite title/artist/album fields when writing (flag; present => True).
+- `--update-only-genre`: only update genre tags (flag; present => True).
 
-### Typical notebook cell layout
+## Modules overview
 
-1. **Configuration cell** — Put all imports, constants and user-editable flags (`from ... import ...`, `CREDENTIALS_PATH`, `RECURSIVE`, `PROCESS_TOP_X`, endpoint URLs, `REQUEST_TIMEOUT`, `OVERWRITE_TITLE_ARTIST_OR_ALBUM`, `UPDATE_ONLY_GENRE`, `PRINT_SEARCH_INFO`, `SEARCH_CANDIDATE_LIMIT`, `MARKET`, and `logging.basicConfig`).
-   **Justification:** Centralizing configuration and imports in one cell makes it trivial to change runtime behavior and ensures the selected kernel/environment has the required packages before running any logic cells.
-2. **MUSIC UTILITIES SECTION** — Include filename parsing and filesystem helpers (`_FILENAME_SPLIT_RE`, `infer_artist_title_from_filename`, `unique_temp_copy`, `send_original_to_trash`).
-   **Justification:** These are pure local utilities (no network). Keeping them isolated allows quick unit tests on filename inference and temp-copy behavior without invoking Spotify or tag-writing logic.
-3. **SEARCH UTILITIES SECTION** — Place all normalization and token-matching helpers (`_strip_parentheses_with_feat`, `_extract_remixer_tokens_from_title`, `_normalize_text_basic`, `_normalize_artist_for_search`, `_normalize_title_for_search`, `_tokens`, `_tokens_in_candidate`, `_build_sanitized_query`).
-   **Justification:** Search normalization is core to match correctness; grouping it makes it easy to tweak sanitization rules and re-run only the search logic during debugging.
-4. **SPOTIFY CLIENT / SEARCH SECTION** — Add Spotify HTTP wrappers and search logic (`get_spotify_token`, `spotifysearch`, `spotify_get_artist_albums`, `spotify_get_album_tracks`, `spotify_find_best_match`).
-   **Justification:** Network/auth logic should be separated so you can refresh tokens or re-run queries independently and inspect raw Spotify responses without touching file I/O.
-5. **TAG WRITING / FORMAT-SPECIFIC HANDLERS** — Put format-specific read/write functions (`download_image_bytes`, `get_artist_genres`, `remove_existing_pictures_generic`, `set_genre_on_audio`, `add_picture_to_audio`).
-   **Justification:** Tag I/O is potentially destructive; isolating these functions lets you test them safely on single sample files before running bulk operations.
-6. **CORE: update metadata for a single file (handles FLAC/MP3/WAV)** — Include the worker function `overwrite_metadata_with_spotify(file_path, token)` (the full read → search → write flow for one file).
-   **Justification:** Having the core worker in one cell makes single-file manual invocation easy (e.g., call it on a test path), enabling iterative verification of behavior before mass processing.
-7. **FILE ITERATION + MAIN** — Add `iter_audio_files`, `get_creation_time`, the orchestration `main()` (load credentials, obtain token, build `paths`, sort by creation time fallback to mtime, loop and call worker), and the `if __name__ == "__main__": main()` guard.
-   **Justification:** This cell runs the end-to-end pipeline; keep it last so all helpers and network functions are defined. It’s the only cell you need to modify minimally (e.g., `PROCESS_TOP_X`) to control a full run.
+- `modules/processor.py`: high-level single-file processing (read tags, search Spotify, build metadata map, write tags and images).
+- `modules/spotify_client.py`: Spotify token and HTTP wrappers, and the matching/search helpers.
+- `modules/tag_utils.py`: image download, genre lookup and format-specific tag helpers (ID3/FLAC/RIFF).
+- `modules/wav_utils.py`: WAV rebuilding and chunk insertion helpers (LIST/INFO and `id3 ` insertion).
+- `modules/filename_utils.py`: filename parsing, safe temp-copy helpers and sending originals to trash.
+- `modules/search_utils.py`: normalization, token extraction and query-building utilities.
+- `modules/core.py`: compatibility shims and file iteration helpers (`iter_audio_files`, `get_creation_time`).
 
----
+The modules import constants from `config.py` and will raise an import-time error if required constants or `config.py` are missing.
 
-## Configuration options explained
+## Troubleshooting
 
-* `RECURSIVE` (`True`/`False`): search for files recursively in subfolders.
-* `FILENAME_PARSE_MODE` (`1`/`0`): if 1, it considers `Title - Artist` filename format; if 0, it considers `Artist - Title` filename format.
-* `PROCESS_TOP_X` (int): number of files to process in this run (sorted by creation date). Useful to test with small batches.
-* `OVERWRITE_TITLE_ARTIST_OR_ALBUM` (`1`/`0`): if 1, overwrite title/artist/album using Spotify results; if 0, preserve existing tags.
-* `UPDATE_ONLY_GENRE` (`1`/`0`): if 1, only update genre tags (safe mode).
-* `PRINT_SEARCH_INFO` (`1`/`0`): enable extended debugging/info logs on how queries and matches were performed.
-* `SEARCH_CANDIDATE_LIMIT` (int): how many Spotify search candidates to consider per file.
-* `MARKET` (string or `None`): pass e.g. `"US"` or `"ES"` to restrict regional results.
+- Spotify 401 errors: check `client_id` / `client_secret` and system clock.
+- No matches: enable `PRINT_SEARCH_INFO` to review sanitization and token checks.
+- WAV cover art support is limited in many players; prefer FLAC for long-term tagging.
+- Originals are sent to system trash — check your recycle bin to restore if needed.
 
-**Recommended safe workflow**
+## License
 
-1. Set `PROCESS_TOP_X = 5` and `PRINT_SEARCH_INFO = 1`.
-2. Run the notebook cells and inspect the printed matching decisions.
-3. If outcomes look good, increase `PROCESS_TOP_X` or set to a larger number to process more files.
-
----
-
-## How it works
-
-1. **Read tags**: read current metadata from the file using Mutagen.
-2. **Fallback to filename**: if artist/title missing, try to infer from filename.
-3. **Search Spotify**: try ISRC search; else attempt normalized containment search (fielded and plain queries).
-4. **Select candidate**: choose the first candidate that satisfies token containment checks.
-5. **Get metadata & cover**: extract title, artist, album, track/disc numbers, date, image URL, and optionally genres (artist-level if available).
-6. **Write to a temp file**: copy original to a uniquely-named `.tmp` file, write metadata to the temp file.
-7. **Replace original safely**: send original to trash (via `send2trash`) and move temp file to original path.
-
----
-
-## Logging and debug information
-
-* Basic info logs are printed via Python's `logging` module.
-* If `PRINT_SEARCH_INFO = 1`, the notebook prints:
-
-  * Sanitized search input,
-  * Each constructed query,
-  * Candidate titles/artists/albums with ACCEPTED/REJECTED decisions,
-  * Token checks and reason for acceptance.
-* Use these logs to fine-tune normalization or to detect corner-case titles (live versions, remixes, etc.).
-
----
-
-## Platform notes & file timestamps
-
-* The notebook sorts files by *creation/birth time* when the filesystem exposes it (`st_birthtime` on some systems).
-* On Windows, `st_ctime` is used as creation time.
-* On Linux filesystems that do not expose birth time, the code falls back to `st_mtime` (modification time).
-* If you need guaranteed birthtime on Linux, additional platform-specific calls would be required (not included by default).
-
----
-
-## Common issues & troubleshooting
-
-* **Spotify authentication errors (401)**: check `client_id` and `client_secret` and ensure your system time is correct.
-* **No matches found**: enable `PRINT_SEARCH_INFO` to inspect sanitization and possible mismatches (remixes, alternate titles).
-* **Cover art not embedded for WAV**: many players do not reliably support embedded images in WAV; consider converting to FLAC/MP3 if art embedding is critical.
-* **Files not changed**: ensure the notebook runs with adequate file permissions and that `music_path` is correct.
-* **Accidental deletes**: originals are moved to the system trash; verify trash contents to restore if needed.
-
----
-
-## Safety & best practices
-
-* **Always test on a small subset** with `PROCESS_TOP_X` before applying to the entire library.
-* **Keep backups** of irreplaceable music files.
-* **Use `UPDATE_ONLY_GENRE = 1`** as a minimally-invasive first pass.
-* **Keep credentials.json private**.
-
----
-
-## Additional notes
-
-* You can adapt the notebook to produce a `requirements.txt`, log file output to disk, or CSV report of changes applied.
-* If desired, a cell can be added to print which timestamp (birth/ctime/mtime) was used for each file to audit ordering decisions.
-
----
+See `LICENSE` in the repository root.

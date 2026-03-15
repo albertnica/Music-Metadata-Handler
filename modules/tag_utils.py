@@ -6,20 +6,14 @@ Utilities for downloading images, obtaining artist genres, and constructing/mani
 from pathlib import Path
 from typing import List, Optional, Tuple
 import requests
-import logging
 import io
 import struct
-import unicodedata
-import tempfile
-import wave
 
 # Mutagen imports
-from mutagen.flac import FLAC, Picture
-from mutagen.id3 import ID3, APIC, TIT2, TPE1, TALB, TDRC, TRCK, TPOS, TCON, TSRC, ID3NoHeaderError
-from mutagen.wave import WAVE
+from mutagen.id3 import ID3, APIC, TIT2, TPE1, TALB, TDRC, TRCK, TPOS, TCON, TSRC
 
-# Import endpoints for artist lookup from config.py (required)
-from config import SPOTIFY_ARTIST_URL, REQUEST_TIMEOUT
+# Import endpoints from config.py
+from config import REQUEST_TIMEOUT
 
 
 def download_image_bytes(url: str) -> Optional[Tuple[bytes, str]]:
@@ -33,23 +27,6 @@ def download_image_bytes(url: str) -> Optional[Tuple[bytes, str]]:
         return r.content, mime
     except Exception:
         return None
-
-
-def get_artist_genres(token: str, artist_id: str) -> List[str]:
-    """
-    Return artist genres list from Spotify artist endpoint or empty list.
-    """
-    try:
-        headers = {"Authorization": f"Bearer {token}"}
-        r = requests.get(SPOTIFY_ARTIST_URL.format(artist_id), headers=headers, timeout=REQUEST_TIMEOUT)
-        if r.ok:
-            j = r.json()
-            genres = j.get("genres", [])
-            if isinstance(genres, list):
-                return genres
-    except Exception:
-        pass
-    return []
 
 
 def remove_existing_pictures_generic(path: Path, audio_obj) -> None:

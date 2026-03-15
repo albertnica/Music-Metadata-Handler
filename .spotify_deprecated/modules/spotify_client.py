@@ -9,52 +9,18 @@ import time
 import requests
 import logging
 
-from config import (
-    SPOTIFY_TOKEN_URL,
-    SPOTIFY_SEARCH_URL,
-    SPOTIFY_ARTIST_URL,
-    SPOTIFY_ARTIST_ALBUMS_URL,
-    SPOTIFY_ALBUM_TRACKS_URL,
-    REQUEST_TIMEOUT,
-    SPOTIFY_MAX_LIMIT,
-    MARKET,
-    SEARCH_CANDIDATE_LIMIT,
-    PRINT_SEARCH_INFO,
-)
+from config import *
 
 # Reuse normalization helpers from search_utils
-try:
-    from modules.search_utils import (
-        _normalize_artist_for_search,
-        _normalize_title_for_search,
-        _extract_remixer_tokens_from_title,
-        _tokens,
-        _tokens_in_candidate,
-        _build_sanitized_query,
-        _normalize_text_basic
-    )
-except Exception:
-    # If the modules package is not set up, try direct import for local testing
-    try:
-        from search_utils import (
-            _normalize_artist_for_search,
-            _normalize_title_for_search,
-            _extract_remixer_tokens_from_title,
-            _tokens,
-            _tokens_in_candidate,
-            _build_sanitized_query,
-            _normalize_text_basic
-        )
-    except Exception:
-        # Provide minimal fallbacks to avoid import-time crashes; real behavior requires search_utils
-        def _normalize_artist_for_search(s): return s or ""
-        def _normalize_title_for_search(s): return s or ""
-        def _extract_remixer_tokens_from_title(s): return []
-        def _tokens(n): return []
-        def _tokens_in_candidate(tokens, candidate_norm): return True
-        def _build_sanitized_query(a, t, al, fielded=True): return '""'
-        def _normalize_text_basic(s): return s or ""
-
+from modules.search_utils import (
+    _normalize_artist_for_search,
+    _normalize_title_for_search,
+    _extract_remixer_tokens_from_title,
+    _tokens,
+    _tokens_in_candidate,
+    _build_sanitized_query,
+    _normalize_text_basic
+)
 
 def get_spotify_token(client_id: str, client_secret: str, ttl_margin: int = 5) -> Tuple[str, int]:
     """

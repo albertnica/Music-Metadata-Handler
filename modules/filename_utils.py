@@ -12,7 +12,6 @@ from send2trash import send2trash
 # Preserve the original filename-splitting regex and behavior
 _FILENAME_SPLIT_RE = re.compile(r"\s[-–—]\s")
 
-
 def infer_artist_title_from_filename(p: Path) -> Tuple[Optional[str], Optional[str]]:
     """
     Infer artist and title from filename, respecting FILENAME_PARSE_MODE:

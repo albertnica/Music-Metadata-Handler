@@ -26,7 +26,7 @@ try:
 except Exception:
     pass
 
-# Keep __all__ minimal (optional)
+# Keep __all__ minimal
 __all__ = [
     "infer_artist_title_from_filename",
     "unique_temp_copy",

@@ -60,7 +60,10 @@ def _normalize_text_basic(s: Optional[str]) -> str:
     s = "".join(ch for ch in s if not unicodedata.combining(ch))
     s = re.sub(r"[()]+", " ", s)
     s = re.sub(r"\b(feat\.?|ft\.?)\b", " ", s, flags=re.IGNORECASE)
-    s = re.sub(r"[^0-9a-zA-Z\s]", " ", s)
+    # Replace separators with spaces
+    s = re.sub(r"[-–—/\\_]", " ", s)
+    # Remove other punctuation directly (prevents V.A.N -> v a n)
+    s = re.sub(r"[^0-9a-zA-Z\s]", "", s)
     s = re.sub(r"\s+", " ", s).strip().lower()
     return s
 

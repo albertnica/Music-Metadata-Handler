@@ -5,16 +5,7 @@ file iteration helpers, allowing backwards compatibility with older imports.
 """
 
 from pathlib import Path
-import logging
-
-# Delegate to the new processor implementation
-try:
-    from modules.processor import process_single_file
-except Exception:
-    # Fallback if import fails (prevents immediate crash on import)
-    def process_single_file(file_path: Path, token: str):
-        logging.error("modules.processor not available; process_single_file missing.")
-        return False
+from modules.processor import process_single_file
 
 # Re-export under the old name expected by older code
 def overwrite_metadata_with_spotify(file_path: Path, token: str) -> bool:

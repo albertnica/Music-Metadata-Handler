@@ -4,6 +4,14 @@ A command-line and library tool to update audio file metadata (title, artist, al
 
 - A CLI entrypoint: `main.py` (recommended for scripted/batch runs).
 - A modular Python package under `modules/` providing the implementation (search, tag I/O, WAV helpers, filename utils).
+- A webpage based on Azure/Vercel to test the program.
+
+<p align="center">
+  <img src="gh/ex.png" />
+  <br />
+  <sub><i>Example of use, screenshots of the MP3Tag program, highly recommended for viewing metadata.</i></sub>
+</p>
+
 
 This README documents installation, configuration, CLI usage and module responsibilities so you can use the tool as a script or import the modules in your own workflows.
 

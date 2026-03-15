@@ -8,7 +8,6 @@ from pathlib import Path
 import tempfile
 import wave
 import logging
-import struct
 from typing import Optional
 
 from modules.tag_utils import build_info_list_chunk, build_id3_bytes_for_wav, strip_id3_and_list_info, insert_chunk_before_data, download_image_bytes

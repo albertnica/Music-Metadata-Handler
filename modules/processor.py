@@ -14,11 +14,10 @@ from config import OVERWRITE_TITLE_ARTIST_OR_ALBUM, UPDATE_ONLY_GENRE, PRINT_SEA
 
 # Utilities from other modules
 from modules.filename_utils import infer_artist_title_from_filename, unique_temp_copy, send_original_to_trash
-from modules.search_utils import _strip_parentheses_with_feat, _normalize_artist_for_search, _normalize_title_for_search, _tokens, _tokens_in_candidate, _extract_remixer_tokens_from_title, _normalize_text_basic
-from modules.spotify_client import spotifysearch, spotify_find_best_match, get_spotify_token
+from modules.search_utils import _strip_parentheses_with_feat
+from modules.deezer_client import deezer_search, deezer_find_best_match
 from modules.tag_utils import (
     download_image_bytes,
-    get_artist_genres,
     remove_existing_pictures_generic,
     set_genre_on_audio,
 )
@@ -184,7 +183,7 @@ def extract_basic_tags(audio_obj, tags, file_path: Path) -> Tuple[Optional[str],
     return artist, album, title, isrc_tag
 
 
-def map_spotify_match_to_metadata(
+def map_deezer_match_to_metadata(
     match: dict,
     artist: Optional[str],
     album: Optional[str],
@@ -192,7 +191,7 @@ def map_spotify_match_to_metadata(
     isrc_tag: Optional[str],
 ) -> Tuple[Dict[str, str], Optional[str], Optional[str], Optional[str]]:
     """
-    Build metadata_map dict from spotify match.
+    Build metadata_map dict from deezer match.
     """
     meta_artist = None
     meta_title = None
@@ -201,58 +200,42 @@ def map_spotify_match_to_metadata(
     meta_track = None
     meta_disc = None
     image_url = None
-    artist_id = None
-    genres_list = []
-
-    if "album" in match and "name" in match:
-        meta_title = match.get("name")
-        album_info = match.get("album", {})
-        meta_album = album_info.get("name")
-        artists = match.get("artists", [])  # typically track-level artists
-        if artists:
-            names = [a.get("name") for a in artists if a.get("name")]
-            meta_artist = ", ".join(names) if names else None
-            artist_id = artists[0].get("id")
-        meta_track = str(match.get("track_number")) if match.get("track_number") else None
-        meta_disc = str(match.get("disc_number")) if match.get("disc_number") else None
-        images = album_info.get("images", [])
-        if images:
-            image_url = images[0].get("url")
-        meta_date = album_info.get("release_date")
-        if isinstance(album_info.get("genres"), list) and album_info.get("genres"):
-            genres_list = album_info.get("genres", [])
-    else:
-        meta_album = match.get("name")
-        artists = match.get("artists", [])
-        if artists:
-            names = [a.get("name") for a in artists if a.get("name")]
-            meta_artist = ", ".join(names) if names else None
-            artist_id = artists[0].get("id")
-        images = match.get("images", [])
-        if images:
-            image_url = images[0].get("url")
-        meta_date = match.get("release_date")
-        if isinstance(match.get("genres"), list) and match.get("genres"):
-            genres_list = match.get("genres", [])
-
+    
+    # Deezer track response structure
+    meta_title = match.get("title")
+    meta_artist = match.get("artist", {}).get("name")
+    
+    album_info = match.get("album", {})
+    meta_album = album_info.get("title")
+    image_url = album_info.get("cover_xl") or album_info.get("cover_big") or album_info.get("cover")
+    
+    # Deezer doesn't always provide full release date in search, usually just 'rank' or 'id'
+    # but sometimes it's available in the track object if fetched via lookup.
+    # For search results, we might not have it unless we do a separate album lookup.
+    # For now, let's see what's in 'match'.
+    
+    # meta_track = str(match.get("track_position")) # track_position or disk_number is often available
+    
     metadata_map = {
         "title": meta_title or title or "",
         "artist": meta_artist or artist or "",
         "album": meta_album or album or "",
-        "date": meta_date or "",
-        "track": meta_track or "",
-        "disc": meta_disc or "",
-        "genre": "; ".join(genres_list) if genres_list else "",
-        "isrc": isrc_tag or ""
+        "date": "", # Deezer search often lacks exact date without album lookup
+        "track": str(match.get("track_position", "")) if match.get("track_position") else "",
+        "disc": str(match.get("disk_number", "")) if match.get("disk_number") else "",
+        "genre": "", # Genre requires artist/album lookup
+        "isrc": match.get("isrc") or isrc_tag or ""
     }
-    return metadata_map, image_url, artist_id, meta_artist
+    return metadata_map, image_url, None, meta_artist
 
 
 # Main processing function
-def process_single_file(file_path: Path, token: str) -> bool:
+def process_single_file(file_path: Path, token: Optional[str] = None, output_dir: Optional[Path] = None) -> bool:
     """
-    Process one file: read tags, search Spotify (ISRC first), obtain metadata_map,
+    Process one file: read tags, search Deezer (ISRC first), obtain metadata_map,
     and write tags / pictures. WAV handling delegated to wav_utils.
+    If `output_dir` is provided, the updated file will be moved there;
+    otherwise the original file is replaced in-place.
     Returns True if updated, False otherwise.
     """
     audio_obj, tags, ext, wav_has_id3 = read_audio_object(file_path)
@@ -273,33 +256,24 @@ def process_single_file(file_path: Path, token: str) -> bool:
     if isrc_tag:
         isrc_q = f'isrc:"{isrc_tag.strip()}"'
         if PRINT_SEARCH_INFO:
-            logging.info("Attempting ISRC search: %s", isrc_q)
+            logging.info("Attempting Deezer ISRC search: %s", isrc_q)
         try:
-            j = spotifysearch(token, isrc_q, type_="track", limit=1, offset=0, market=MARKET)
+            j = deezer_search(isrc_q, limit=1)
             if j:
-                items = j.get("tracks", {}).get("items", [])
+                items = j.get("data", [])
                 if items:
                     match = items[0]
         except Exception:
             match = None
 
     if not match:
-        match = spotify_find_best_match(token, artist_for_search, album_for_search, title_for_search, combined_limit=SEARCH_CANDIDATE_LIMIT)
+        match = deezer_find_best_match(artist_for_search, album_for_search, title_for_search, combined_limit=SEARCH_CANDIDATE_LIMIT)
 
     if not match:
-        logging.info("No Spotify match for: %s", file_path.name)
+        logging.info("No Deezer match for: %s", file_path.name)
         return False
 
-    metadata_map, image_url, artist_id, meta_artist = map_spotify_match_to_metadata(match, artist, album, title, isrc_tag)
-
-    # Optionally fetch genres via artist id (if not already present)
-    if artist_id:
-        try:
-            g = get_artist_genres(token, artist_id)
-            if g:
-                metadata_map["genre"] = "; ".join(g)
-        except Exception:
-            pass
+    metadata_map, image_url, _, meta_artist = map_deezer_match_to_metadata(match, artist, album, title, isrc_tag)
 
     # Create temp copy
     temp_path = unique_temp_copy(file_path)
@@ -426,9 +400,18 @@ def process_single_file(file_path: Path, token: str) -> bool:
                     pass
             return False
 
-        # Replace original: send original to trash and move temp into place
+        # Determine destination: output_dir if provided else original path
+        dest_path = Path(output_dir) / file_path.name if output_dir else file_path
+        try:
+            dest_parent = dest_path.parent
+            if not dest_parent.exists():
+                dest_parent.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            pass
+
+        # Send original to trash (keeps behavior) and move temp into destination
         send_original_to_trash(file_path)
-        shutil.move(str(temp_path), str(file_path))
+        shutil.move(str(temp_path), str(dest_path))
         return True
 
     except Exception as e:

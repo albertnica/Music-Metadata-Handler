@@ -1,98 +1,82 @@
 # Music Metadata Handler
 
-A command-line and library tool to update audio file metadata (title, artist, album, date, track, disc, genre and cover art) for FLAC, MP3 and WAV files using the Spotify Web API. The project provides:
+A high-performance command-line tool designed to synchronize local audio metadata (FLAC, MP3) with the Spotify Web API. It automatically updates titles, artists, albums, release dates, and high-resolution cover art.
 
-- A CLI entrypoint: `main.py` (recommended for scripted/batch runs).
-- A modular Python package under `modules/` providing the implementation (search, tag I/O, WAV helpers, filename utils).
-- A webpage based on Azure/Vercel to test the program.
+- **CLI Entrypoint**: `main.py` for batch processing and automated library maintenance.
+- **Architectural Design**: Decoupled modules for search heuristics, tag I/O, and filename inference.
 
 <p align="center">
   <img src="gh/ex.png" />
   <br />
-  <sub><i>Example of use, screenshots of the MP3Tag program, highly recommended for viewing metadata.</i></sub>
+  <sub><i>Experience seamless library organization with embedded artwork and standardized tags.</i></sub>
 </p>
 
-
-This README documents installation, configuration, CLI usage and module responsibilities so you can use the tool as a script or import the modules in your own workflows.
-
 ## Features
-- Supports FLAC, MP3 (ID3) and WAV (LIST/INFO + ID3 chunk where applicable).
-- Infers artist/title from filename when tags are missing (supports `Artist - Title` and `Title - Artist` modes).
-- Uses ISRC search first when available; otherwise performs normalized, token-based Spotify searches.
-- Optionally only update genre (safe mode).
-- Downloads and embeds album art for supported formats.
-- Processes files ordered by creation time (falls back to modification time).
+- **Native Support**: Full metadata and cover art support for FLAC and MP3 (ID3v2.4).
+- **Intelligent Inference**: Extracts artist/track information from filenames when tags are absent or malformed.
+- **Heuristic Search**: Prioritizes ISRC matches before falling back to token-based similarity scoring (remix and feature detection included).
+- **Safe Mode**: Optionally update only the genre field to preserve custom library tagging.
+- **Ordered Processing**: Optimizes library scanning by processing files based on creation time.
 
 ## Installation
 
-1. Create and activate a virtual environment (Windows only, recommended):
-
+1. Initialize a virtual environment (Windows recommended):
 ```powershell
 python -m venv venv
 venv\Scripts\Activate.ps1
 ```
 
-2. Install dependencies:
-
+2. Install core dependencies:
 ```powershell
 pip install -r requirements.txt
 ```
 
-## Configuration (`config.py`) and credentials
+## Configuration & Authentication
 
-The repository expects a local `config.py` with runtime flags and endpoint constants — see `config.py` for defaults. The program loads `credentials.json` which must contain your Spotify credentials and optionally a `music_path`. Example `credentials.json`:
+The tool requires a `credentials.json` file in the root directory. Unlike legacy versions, this tool uses a direct **Spotify Bearer Token** for maximum simplicity.
 
+### `credentials.json`
 ```json
 {
-  "client_id": "YOUR_SPOTIFY_CLIENT_ID",
-  "client_secret": "YOUR_SPOTIFY_CLIENT_SECRET",
-  "music_path": "C:/path/to/your/music/folder"
+  "token": "YOUR_SPOTIFY_BEARER_TOKEN",
+  "music_path": "C:/path/to/your/music"
 }
 ```
 
-Important config flags in `config.py`:
-- `RECURSIVE` (bool): whether to scan subfolders.
-- `PROCESS_TOP_X` (int): limit number of files to process in one run.
-- `OVERWRITE_TITLE_ARTIST_OR_ALBUM` (0|1): whether to overwrite title/artist/album fields.
-- `UPDATE_ONLY_GENRE` (0|1): if 1, only update genre tags.
-- `PRINT_SEARCH_INFO` (0|1): enable verbose search/debug logs.
-- `SEARCH_CANDIDATE_LIMIT` (int): how many Spotify candidates to consider per file.
-- Endpoint URLs and timeouts are also defined in `config.py`.
+> [!TIP]
+> If the token in `credentials.json` is missing or expired, the script will automatically prompt you to paste a new one and update the file for you.
 
-## CLI usage (main.py)
+### Key Flags (`config.py`)
+- `RECURSIVE`: Scan subdirectories depth-first.
+- `PROCESS_TOP_X`: Limit processing volume for large libraries.
+- `OVERWRITE_TITLE_ARTIST_OR_ALBUM`: Toggle between forced updates and "fill-in-missing" mode.
+- `UPDATE_ONLY_GENRE`: Restricts all updates to the genre field only.
 
-`main.py` is the recommended entrypoint for non-interactive runs. Example:
+## CLI Usage
 
+Standard execution via the Python interpreter:
 ```bash
-python main.py --music-path "C:/Music" --process-top-x 20 --recursive
+python main.py --input-path "C:/Music" --process-top-x 50 --recursive
 ```
 
-Available flags (short explanation):
-- `--music-path <path>`: override `music_path` from `credentials.json`.
-- `--process-top-x <int>`: number of files to process in this run (overrides `config.PROCESS_TOP_X`).
-- `--recursive`: scan subfolders (flag; present => True, absent => False).
-- `--overwrite-taa`: overwrite title/artist/album fields when writing (flag; present => True).
-- `--update-only-genre`: only update genre tags (flag; present => True).
+### Argument Reference
+- `--input-path`: Overrides the default source path in `credentials.json`.
+- `--process-top-x`: Defines the processing ceiling for the current run.
+- `--recursive`: Enables deep-scanning of the library tree.
+- `--overwrite-taa`: Forces an overwrite of core metadata fields.
 
-## Modules overview
-
-- `modules/processor.py`: high-level single-file processing (read tags, search Spotify, build metadata map, write tags and images).
-- `modules/spotify_client.py`: Spotify token and HTTP wrappers, and the matching/search helpers.
-- `modules/tag_utils.py`: image download, genre lookup and format-specific tag helpers (ID3/FLAC/RIFF).
-- `modules/wav_utils.py`: WAV rebuilding and chunk insertion helpers (LIST/INFO and `id3 ` insertion).
-- `modules/filename_utils.py`: filename parsing, safe temp-copy helpers and sending originals to trash.
-- `modules/search_utils.py`: normalization, token extraction and query-building utilities.
-- `modules/core.py`: compatibility shims and file iteration helpers (`iter_audio_files`, `get_creation_time`).
-
-The modules import constants from `config.py` and will raise an import-time error if required constants or `config.py` are missing.
+## Module Architecture
+- `modules/processor.py`: Orchestrates the per-file validation and update lifecycle.
+- `modules/spotify_client.py`: High-level wrapper for Spotify search and matching heuristics.
+- `modules/tag_utils.py`: Format-specific I/O for FLAC/MP3 and image processing.
+- `modules/filename_utils.py`: Utility functions for temporary staging and path management.
+- `modules/search_utils.py`: Normalization and tokenization logic for search queries.
+- `modules/core.py`: File system iteration and creation-time sorting.
 
 ## Troubleshooting
-
-- Spotify 401 errors: check `client_id` / `client_secret` and system clock.
-- No matches: enable `PRINT_SEARCH_INFO` to review sanitization and token checks.
-- WAV cover art support is limited in many players; prefer FLAC for long-term tagging.
-- Originals are sent to system trash — check your recycle bin to restore if needed.
+- **401 Unauthorized**: Ensure your token is fresh. The script will prompt for a new one if it detects expiration.
+- **No Matches Found**: Check if your filenames accurately reflect the artist and title. Enable `PRINT_SEARCH_INFO` in `config.py` for a detailed look at the search queries.
+- **Recycle Bin**: The script sends original files to the system trash before replacing them. You can restore originals from there if a match is unsatisfactory.
 
 ## License
-
-See `LICENSE` in the repository root.
+Refer to `LICENSE` for distribution rights and usage constraints.

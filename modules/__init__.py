@@ -15,12 +15,7 @@ from .search_utils import (
     _tokens_in_candidate,
     _build_sanitized_query
 )
-# Expose processor entrypoint and wav utils if available
-try:
-    from .processor import process_single_file
-except Exception:
-    pass
-
+# Expose wav utils if available
 try:
     from .wav_utils import finalize_wav_with_metadata
 except Exception:
@@ -31,6 +26,5 @@ __all__ = [
     "infer_artist_title_from_filename",
     "unique_temp_copy",
     "send_original_to_trash",
-    "process_single_file",
     "finalize_wav_with_metadata"
 ]

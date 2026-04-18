@@ -1,23 +1,21 @@
 """
 modules/core.py
-Compatibility wrapper. Provides overwrite_metadata_with_spotify and keeps
-file iteration helpers, allowing backwards compatibility with older imports.
+Abstraction layer for file system operations and legacy compatibility. 
+We centralize file iteration and metadata extraction here to maintain a 
+consistent API if we swap underlying libraries or processing logic.
 """
 
 from pathlib import Path
-from modules.processor import process_single_file
 
-# Re-export under the old name expected by older code
-def overwrite_metadata_with_spotify(file_path: Path, token: str) -> bool:
-    """
-    Backwards-compatible wrapper that calls the new processor.process_single_file.
-    """
-    return process_single_file(file_path, token)
-
-
-# File iteration helpers (kept from the original for compatibility)
+# File iteration helpers
 def iter_audio_files(root: Path, recursive: bool):
-    patterns = ("*.flac", "*.mp3", "*.wav")
+    """
+    Scans for supported audio formats. WAV is excluded as per the latest 
+    streamlining requirements to focus on higher-fidelity/compressed formats.
+    Reason: WAV support was deprecated to simplify the codebase and avoid 
+    low-level RIFF chunk manipulation issues.
+    """
+    patterns = ("*.flac", "*.mp3")
     if recursive:
         for pat in patterns:
             yield from root.rglob(pat)
@@ -27,6 +25,13 @@ def iter_audio_files(root: Path, recursive: bool):
 
 
 def get_creation_time(path: Path) -> float:
+    """
+    Retrieves the most accurate file creation timestamp available. 
+    Sorted processing relies on this to handle incoming files in the order 
+    they were added to the library.
+    Reason: Different OSes report creation time via different attributes; 
+    we need a cross-platform fallback to st_mtime for consistency.
+    """
     try:
         s = path.stat()
         if hasattr(s, "st_birthtime"):

@@ -1,23 +1,22 @@
 """
 main.py
-Entrypoint for the metadata updater. Loads credentials, obtains Spotify token,
-iterates audio files and updates metadata using modules.processor.
-If an option is not provided, the default from config.py is used.
+Entrypoint for the Music Metadata Handler. 
+Orchestrates the metadata update process by managing Spotify authentication tokens, 
+scanning for local audio files (FLAC/MP3), and triggering the asynchronous processing pipeline.
 """
 
 import argparse
 import json
-import time
 import logging
 from pathlib import Path
 import sys
+import asyncio
+import concurrent.futures
 
-# Import config module early so we can mutate it based on CLI args BEFORE importing other modules
-# Using config.something is preferred in this case
+# Import config module early to allow CLI overrides before other modules are initialized
 import config
 
-# Ensure config has expected defaults so main can rely on them as baseline values.
-# If a key is missing from config.py, set a sane default here (CLI can still override).
+# Standard baseline configuration values for the execution environment
 _DEFAULTS = {
     "RECURSIVE": False,
     "PROCESS_TOP_X": 1,
@@ -33,38 +32,29 @@ for _k, _v in _DEFAULTS.items():
         setattr(config, _k, _v)
 
 def parse_args():
+    """
+    Parses command-line arguments to allow runtime customization.
+    """
     parser = argparse.ArgumentParser(
         description="Update audio file metadata using Spotify. CLI overrides config.py defaults."
     )
-    # Boolean flags use default=None so we can detect "not provided" and keep config defaults.
     parser.add_argument("--recursive", dest="recursive", action="store_true", default=None,
-                        help="--recursive: Process files in subfolders (overrides config.RECURSIVE)")
-
+                        help="Process files in subfolders.")
     parser.add_argument("--process-top-x", dest="process_top_x", type=int, default=None,
-                        help="--process-top-x int: Number of files to process (overrides config.PROCESS_TOP_X)")
-
+                        help="Number of files to process.")
     parser.add_argument("--overwrite-taa", dest="overwrite_taa", action="store_true", default=None,
-                        help="--overwrite-taa: Overwrite title/artist/album fields (overrides config.OVERWRITE_TITLE_ARTIST_OR_ALBUM)")
-
+                        help="Overwrite title/artist/album fields.")
     parser.add_argument("--update-only-genre", dest="update_only_genre", action="store_true", default=None,
-                        help="--update-only-genre: Only update genre fields (overrides config.UPDATE_ONLY_GENRE)")
-
+                        help="Only update genre fields.")
     parser.add_argument("--input-path", dest="input_path", type=str, default=None,
-                        help="--input-path path: Override music_path from credentials.json with this path")
+                        help="Override music_path from credentials.json.")
     parser.add_argument("--output-path", dest="output_path", type=str, default=None,
-                        help="--output-path path: Directory to write outputs.")
-    parser.add_argument("--token", dest="token", type=str, default=None,
-                        help="--token string: Manual Spotify access token to use")
-
-    parser.add_argument("--print-search-info", dest="print_search_info", action="store_true", default=None,
-                        help="--print-search-info: Print extended search logs (overrides config.PRINT_SEARCH_INFO)")
-
-    # Pass-through extra args to be tolerant
+                        help="Directory to write outputs.")
     return parser.parse_args()
 
 def apply_cli_overrides_to_config(args):
     """
-    Mutate config module attributes based on parsed CLI args.
+    Mutates the config module attributes based on user-provided CLI arguments.
     """
     if getattr(args, "recursive", None) is not None:
         config.RECURSIVE = bool(args.recursive)
@@ -73,7 +63,7 @@ def apply_cli_overrides_to_config(args):
         try:
             config.PROCESS_TOP_X = int(args.process_top_x)
         except Exception:
-            logging.warning("Invalid process_top_x value passed; keeping config.PROCESS_TOP_X = %r", config.PROCESS_TOP_X)
+            logging.warning("Invalid process_top_x value; keeping default.")
 
     if getattr(args, "overwrite_taa", False) is not None:
         config.OVERWRITE_TITLE_ARTIST_OR_ALBUM = int(bool(args.overwrite_taa))
@@ -81,106 +71,202 @@ def apply_cli_overrides_to_config(args):
     if getattr(args, "update_only_genre", False) is not None:
         config.UPDATE_ONLY_GENRE = int(bool(args.update_only_genre))
 
-    if getattr(args, "print_search_info", None) is not None:
-        config.PRINT_SEARCH_INFO = int(bool(args.print_search_info))
+
+def save_token_to_credentials(token: str, original_data: dict):
+    """
+    Persists a valid Bearer token back to credentials.json.
+    """
+    try:
+        data = original_data.copy()
+        data["token"] = token
+        data.pop("client_id", None)
+        data.pop("client_secret", None)
+        
+        with config.CREDENTIALS_PATH.open("w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+        logging.info("Token successfully saved to credentials.json")
+    except Exception as e:
+        logging.error("Failed to save token to credentials file: %s", e)
+
+
+def get_valid_token(current_token: str, original_data: dict):
+    """
+    Validates the current token and prompts for a new one if unauthorized (401) or malformed (400).
+    Automatically strips "Bearer " prefix if user accidentally pastes it.
+    """
+    from modules.spotify_client import spotifysearch
+    
+    token = current_token
+    attempts = 0
+    while attempts < 3:
+        if not token:
+            logging.warning("No Spotify token found.")
+            token = input("Please enter a new Spotify Bearer Token: ").strip()
+            if token.lower().startswith("bearer "):
+                token = token[7:].strip()
+            if not token:
+                logging.error("No token provided. Exiting.")
+                sys.exit(1)
+            save_token_to_credentials(token, original_data)
+            continue
+            
+        async def _test_token():
+            import aiohttp
+            sem = asyncio.Semaphore(1)
+            async with aiohttp.ClientSession() as session:
+                return await spotifysearch(session, sem, token, "test", limit=1)
+                
+        res = asyncio.run(_test_token())
+        
+        if res and "error" in res and res["error"].get("status") in (401, 400):
+            logging.warning("Current Spotify token is invalid or expired.")
+            token = input("Please enter a new Spotify Bearer Token: ").strip()
+            if token.lower().startswith("bearer "):
+                token = token[7:].strip()
+            if not token:
+                logging.error("No token provided. Exiting.")
+                sys.exit(1)
+            save_token_to_credentials(token, original_data)
+            attempts += 1
+        elif res is None:
+            logging.error("Unable to reach Spotify API. Please check your connection.")
+            sys.exit(1)
+        else:
+            return token
+            
+    logging.error("Multiple invalid token attempts. Please check your source.")
+    sys.exit(1)
 
 
 def main():
-    # Parse CLI args first
     args = parse_args()
-
-    # Apply overrides to config BEFORE importing modules that read them at import-time
     apply_cli_overrides_to_config(args)
 
-    # Now import modules that depend on config values
     try:
         from modules.core import iter_audio_files, get_creation_time
-        from modules.processor import process_single_file
+        from modules.processor import extract_local_tags, fetch_spotify_data_async, commit_tags_to_file
     except Exception as e:
-        logging.error("Failed importing modules: %s", e)
-        sys.exit()
+        logging.error("Resource initialization failed: %s", e)
+        sys.exit(1)
 
-    # Load credentials and music path from credentials.json
+    # Configuration loading and path validation
     try:
         with config.CREDENTIALS_PATH.open("r", encoding="utf-8") as f:
-            data = json.load(f)
+            creds_data = json.load(f)
         
-        # Token: CLI override preferred; then credentials.json
-        spotify_token = args.token or data.get("spotify_access_token")
-        if not spotify_token:
-            logging.error("No Spotify access token found. Provide it in credentials.json or via --token.")
-            return
-
-        # Input path: CLI override preferred; else credentials.json
-        if args.input_path:
-            input_path = args.input_path
-        else:
-            input_path = data.get("music_path") or data.get("source_dir") or data.get("music_dir")
-
+        token = str(creds_data.get("token", "")).strip()
+        if token.lower().startswith("bearer "):
+            token = token[7:].strip()
+            
+        input_path = args.input_path or creds_data.get("music_path") or creds_data.get("source_dir")
+        
         if not input_path:
-            logging.error("Missing music_path in credentials.json and no --input-path provided")
+            logging.error("No music library path defined in credentials.json or CLI.")
             return
+
         SOURCE_DIR = Path(input_path)
         if not SOURCE_DIR.exists() or not SOURCE_DIR.is_dir():
-            logging.error("input_path is not a valid directory: %s", SOURCE_DIR)
+            logging.error("Invalid source directory: %s", SOURCE_DIR)
             return
-        logging.info("Loaded input path: %s", SOURCE_DIR)
 
-        # Output path: default to input path unless overridden
-        if args.output_path:
-            OUTPUT_DIR = Path(args.output_path)
-        else:
-            OUTPUT_DIR = SOURCE_DIR
+        OUTPUT_DIR = Path(args.output_path) if args.output_path else SOURCE_DIR
         if not OUTPUT_DIR.exists() or not OUTPUT_DIR.is_dir():
-            logging.error("output_path is not a valid directory: %s", OUTPUT_DIR)
+            logging.error("Invalid output directory: %s", OUTPUT_DIR)
             return
-        logging.info("Using output path: %s", OUTPUT_DIR)
-        
-    except FileNotFoundError:
-        logging.error("Credentials file not found: %s", config.CREDENTIALS_PATH)
-        return
-    except json.JSONDecodeError as e:
-        logging.error("Error parsing credentials.json: %s", e)
-        return
-    except Exception as e:
-        logging.error("Failed to load credentials: %s", e)
+
+        # Pre-execution token validation
+        token = get_valid_token(token, creds_data)
+        logging.info("Spotify authentication successful.")
+
+    except (FileNotFoundError, json.JSONDecodeError) as e:
+        logging.error("Credentials configuration error: %s", e)
         return
 
-    # Use possibly overridden PROCESS_TOP_X and RECURSIVE from config
-    paths = [p for p in iter_audio_files(SOURCE_DIR, config.RECURSIVE)]
-    paths.sort(key=lambda p: get_creation_time(p) if p.exists() else 0, reverse=True)
-    total = len(paths)
-    logging.info("Found %d audio files (FLAC/MP3/WAV) in %s", total, SOURCE_DIR)
+    # File discovery and prioritization
+    paths = list(iter_audio_files(SOURCE_DIR, config.RECURSIVE))
+    paths.sort(key=lambda p: get_creation_time(p), reverse=True)
+    total_found = len(paths)
+    logging.info("Discovered %d audio files (FLAC/MP3) in %s", total_found, SOURCE_DIR)
 
-    if isinstance(config.PROCESS_TOP_X, int) and config.PROCESS_TOP_X > 0:
-        limit = min(config.PROCESS_TOP_X, total)
-        paths = paths[:limit]
+    if config.PROCESS_TOP_X > 0:
+        paths = paths[:min(config.PROCESS_TOP_X, total_found)]
+
+    total_to_process = len(paths)
+    if total_to_process == 0:
+        logging.info("No files to process. Exiting.")
+        return
 
     updated = skipped = failed = 0
-    for i, path in enumerate(paths, 1):
-        try:
-            logging.info("Processing (%d/%d): %s", i, len(paths), path.name)
-            # Pass the token to process_single_file
-            ok = process_single_file(path, token=spotify_token, output_dir=OUTPUT_DIR)
-            if ok:
-                logging.info("Updated metadata for: %s (original moved to trash)", path.name)
-                updated += 1
+
+    # ---------------------------------------------------------
+    # STAGE 1: Extract Local Metadata (ThreadPoolExecutor)
+    # ---------------------------------------------------------
+    logging.info("Stage 1/3: Extracting local metadata tags (%d files)...", total_to_process)
+    local_data_list = []
+    
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+        results = executor.map(extract_local_tags, paths)
+        for res in results:
+            if res is not None:
+                local_data_list.append(res)
             else:
                 skipped += 1
 
-        except KeyboardInterrupt:
-            break
-        except Exception as e:
-            logging.error("Unexpected error processing %s: %s", path.name, e)
-            failed += 1
+    if not local_data_list:
+        logging.info("Summary: Updated: 0 | Skipped: %d | Failed: 0 | Total: %d", skipped, total_found)
+        return
 
-    logging.info("Completed. Updated: %d, Skipped: %d, Failed: %d, Total found: %d", updated, skipped, failed, total)
+    # ---------------------------------------------------------
+    # STAGE 2: Fetch Spotify Metadata (Asyncio Network I/O)
+    # ---------------------------------------------------------
+    logging.info("Stage 2/3: Fetching Spotify metadata asynchronously...")
+    
+    async def fetch_all(loop_data, access_token):
+        import aiohttp
+        # Semaphore limits concurrent requests to prevent HTTP 429 Too Many Requests
+        semaphore = asyncio.Semaphore(3)
+        async with aiohttp.ClientSession() as session:
+            tasks = [fetch_spotify_data_async(session, semaphore, access_token, param) for param in loop_data]
+            return await asyncio.gather(*tasks)
+
+    fetch_results = asyncio.run(fetch_all(local_data_list, token))
+    
+    valid_updates = []
+    skipped_filenames = []
+    
+    for i, res in enumerate(fetch_results):
+        if res is not None:
+            valid_updates.append(res)
+        else:
+            skipped_filenames.append(local_data_list[i]["file_path"].name)
+            
+    skipped += len(skipped_filenames)
+
+    # ---------------------------------------------------------
+    # STAGE 3: Commit Metadata to Disk (ThreadPoolExecutor)
+    # ---------------------------------------------------------
+    if valid_updates:
+        logging.info("Stage 3/3: Committing %d metadata updates to disk...", len(valid_updates))
+        
+        def commit_wrapper(update_data):
+            return commit_tags_to_file(update_data, OUTPUT_DIR)
+
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            results = executor.map(commit_wrapper, valid_updates)
+            for ok in results:
+                if ok:
+                    updated += 1
+                else:
+                    failed += 1
+
+    logging.info("Summary: Updated: %d | Skipped: %d | Failed: %d | Total processed: %d", updated, skipped, failed, total_to_process)
+    
+    if skipped_filenames:
+        logging.info("\n--- SKIPPED FILES (No Spotify Match) ---")
+        for fn in sorted(skipped_filenames):
+            logging.info(f" - {fn}")
 
 
 if __name__ == "__main__":
-    # Ensure logging configured
-    try:
-        logging.getLogger().handlers  # just access to avoid lint warnings
-    except Exception:
-        logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
     main()

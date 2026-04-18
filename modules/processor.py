@@ -1,13 +1,16 @@
 """
 modules/processor.py
-Per-file processing orchestrator. Read tags, apply filename fallback,
-search Spotify (ISRC first, containment fallback) and write metadata for FLAC/MP3/WAV.
+Per-file processing orchestrator. 
+This module has been decoupled to support asynchronous batch processing.
+It exposes atomic stages: extracting local tags, querying Spotify asymptotically, 
+and committing updates safely to disk.
 """
 
 from pathlib import Path
 import logging
 from typing import Optional, Tuple, Dict, Any
 import shutil
+import asyncio
 
 # Configuration
 from config import OVERWRITE_TITLE_ARTIST_OR_ALBUM, UPDATE_ONLY_GENRE, PRINT_SEARCH_INFO, MARKET, SEARCH_CANDIDATE_LIMIT
@@ -15,21 +18,18 @@ from config import OVERWRITE_TITLE_ARTIST_OR_ALBUM, UPDATE_ONLY_GENRE, PRINT_SEA
 # Utilities from other modules
 from modules.filename_utils import infer_artist_title_from_filename, unique_temp_copy, send_original_to_trash
 from modules.search_utils import _strip_parentheses_with_feat
-from modules.spotify_client import spotifysearch, spotify_find_best_match
+from modules.spotify_client import spotifysearch, spotify_find_best_match, _debug_log
 from modules.tag_utils import (
     download_image_bytes,
     get_artist_genres,
     remove_existing_pictures_generic,
     set_genre_on_audio,
 )
-from modules import wav_utils  # wav_utils contains WAV rebuild/insert helpers
 
 # Mutagen imports
 from mutagen.flac import FLAC, Picture
 from mutagen.id3 import ID3, APIC, TIT2, TPE1, TALB, TDRC, TRCK, TPOS, TCON, TSRC, ID3NoHeaderError
-from mutagen.wave import WAVE
 
-# Basic helpers
 def _val_to_str(v):
     try:
         if v is None:
@@ -56,9 +56,6 @@ def _val_to_str(v):
 
 
 def first_tag_generic(audio_obj, tags, key):
-    """
-    Generic extractor across FLAC/ID3/WAVE.
-    """
     try:
         if isinstance(audio_obj, FLAC):
             v = tags.get(key)
@@ -94,38 +91,13 @@ def first_tag_generic(audio_obj, tags, key):
                         except Exception:
                             return None
             return None
-        if getattr(tags, "get", None):
-            v = tags.get(key)
-            if v:
-                return _val_to_str(v)
-            alt_keys = {
-                "title":["INAM","NAME","TITLE","TIT2"],
-                "artist":["IART","AUTH","ARTIST","TPE1"],
-                "album":["IPRD","ALBUM","TALB"],
-                "date":["ICRD","DATE","YEAR","TDRC"],
-                "tracknumber":["ITRK","TRACKNUMBER","TRCK"],
-                "discnumber":["TPOS","DISCNUMBER"],
-                "isrc":["TSRC","ISRC"],
-                "genre":["IGEN","IGNR","GENR","GENRE","TCON"]
-            }
-            for alt in alt_keys.get(key, []):
-                try:
-                    vv = tags.get(alt)
-                    if vv:
-                        return _val_to_str(vv)
-                except Exception:
-                    continue
         return None
     except Exception:
         return None
 
 
 def read_audio_object(file_path: Path):
-    """
-    Open file with mutagen and return tuple (audio_obj, tags, ext, wav_has_id3 flag).
-    """
     ext = file_path.suffix.lower()
-    wav_has_id3 = False
     audio = None
     try:
         if ext == ".flac":
@@ -135,65 +107,59 @@ def read_audio_object(file_path: Path):
                 audio = ID3(str(file_path))
             except ID3NoHeaderError:
                 audio = ID3()
-        elif ext == ".wav":
-            try:
-                audio = ID3(str(file_path))
-                wav_has_id3 = True
-            except ID3NoHeaderError:
-                try:
-                    audio = WAVE(str(file_path))
-                    wav_has_id3 = False
-                except Exception:
-                    audio = None
-                    wav_has_id3 = False
         else:
-            logging.info("Unsupported format: %s", file_path.name)
-            return None, None, ext, wav_has_id3
+            return None, None, ext
     except Exception as e:
-        logging.error("Could not open %s: %s", file_path.name, e)
-        return None, None, ext, wav_has_id3
+        return None, None, ext
 
-    # gather tags safely
     try:
         if isinstance(audio, FLAC):
             tags = audio.tags or {}
         elif isinstance(audio, ID3):
             tags = audio
-        elif isinstance(audio, WAVE):
-            tags = getattr(audio, "tags", {}) or {}
         else:
             tags = {}
     except Exception:
         tags = {}
-    return audio, tags, ext, wav_has_id3
+    return audio, tags, ext
 
 
-def extract_basic_tags(audio_obj, tags, file_path: Path) -> Tuple[Optional[str], Optional[str], Optional[str], Optional[str]]:
+def extract_local_tags(file_path: Path) -> Optional[Dict[str, Any]]:
     """
-    Return (artist, album, title, isrc) with filename fallback.
+    STAGE 1 (Sync): Extracts baseline metadata from the local audio file to queue for Spotify.
     """
-    artist = first_tag_generic(audio_obj, tags, "artist") or first_tag_generic(audio_obj, tags, "albumartist")
-    album = first_tag_generic(audio_obj, tags, "album")
-    title = first_tag_generic(audio_obj, tags, "title")
+    audio_obj, tags, ext = read_audio_object(file_path)
+    if audio_obj is None:
+        logging.info("Unsupported format or unreadable file: %s", file_path.name)
+        return None
+
     isrc_tag = first_tag_generic(audio_obj, tags, "isrc") or first_tag_generic(audio_obj, tags, "ISRC")
+    id3_artist = first_tag_generic(audio_obj, tags, "artist") or first_tag_generic(audio_obj, tags, "albumartist")
+    id3_album = first_tag_generic(audio_obj, tags, "album")
+    id3_title = first_tag_generic(audio_obj, tags, "title")
 
-    ai, ti = infer_artist_title_from_filename(file_path)
-    artist = artist or ai
-    title = title or ti
+    fn_artist, fn_title = infer_artist_title_from_filename(file_path)
 
-    return artist, album, title, isrc_tag
+    if not id3_artist and not fn_artist and not id3_title and not fn_title:
+        logging.info("Insufficient metadata to search for: %s", file_path.name)
+        return None
+
+    return {
+        "file_path": file_path,
+        "id3_artist": id3_artist,
+        "id3_title": id3_title,
+        "id3_album": id3_album,
+        "fn_artist": fn_artist,
+        "fn_title": fn_title,
+        "artist": id3_artist or fn_artist, # Fallback generic
+        "album": id3_album,
+        "title": id3_title or fn_title, # Fallback generic
+        "isrc_tag": isrc_tag,
+        "ext": ext
+    }
 
 
-def map_spotify_match_to_metadata(
-    match: dict,
-    artist: Optional[str],
-    album: Optional[str],
-    title: Optional[str],
-    isrc_tag: Optional[str],
-) -> Tuple[Dict[str, str], Optional[str], Optional[str], Optional[str]]:
-    """
-    Build metadata_map dict from spotify match.
-    """
+def map_spotify_match_to_metadata(match: dict, artist: Optional[str], album: Optional[str], title: Optional[str], isrc_tag: Optional[str]) -> Tuple[Dict[str, str], Optional[str], Optional[str], Optional[str]]:
     meta_artist = None
     meta_title = None
     meta_album = None
@@ -208,7 +174,7 @@ def map_spotify_match_to_metadata(
         meta_title = match.get("name")
         album_info = match.get("album", {})
         meta_album = album_info.get("name")
-        artists = match.get("artists", [])  # typically track-level artists
+        artists = match.get("artists", [])
         if artists:
             names = [a.get("name") for a in artists if a.get("name")]
             meta_artist = ", ".join(names) if names else None
@@ -222,7 +188,6 @@ def map_spotify_match_to_metadata(
         if isinstance(album_info.get("genres"), list) and album_info.get("genres"):
             genres_list = album_info.get("genres", [])
     else:
-        # Potentially an album object from search
         meta_album = match.get("name")
         artists = match.get("artists", [])
         if artists:
@@ -249,76 +214,90 @@ def map_spotify_match_to_metadata(
     return metadata_map, image_url, artist_id, meta_artist
 
 
-# Main processing function
-def process_single_file(file_path: Path, token: str, output_dir: Optional[Path] = None) -> bool:
+async def fetch_spotify_data_async(session, semaphore, token: str, local_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     """
-    Process one file: read tags, search Spotify (ISRC first), obtain metadata_map,
-    and write tags / pictures. WAV handling delegated to wav_utils.
-    If `output_dir` is provided, the updated file will be moved there;
-    otherwise the original file is replaced in-place.
-    Returns True if updated, False otherwise.
+    STAGE 2 (Async): Network bound layer gathering Spotify metadata and art without blocking CPU logic.
+    Follows a cascading fallback: ISRC -> ID3 -> Filename.
     """
-    audio_obj, tags, ext, wav_has_id3 = read_audio_object(file_path)
-    if audio_obj is None and ext not in (".flac", ".mp3", ".wav"):
-        return False
-
-    artist, album, title, isrc_tag = extract_basic_tags(audio_obj, tags, file_path)
-    if not artist and not title:
-        logging.info("Insufficient metadata for: %s", file_path.name)
-        return False
-
-    artist_for_search = _strip_parentheses_with_feat(artist) if artist else None
-    title_for_search = _strip_parentheses_with_feat(title) if title else None
-    album_for_search = _strip_parentheses_with_feat(album) if album else None
-
-    # Try ISRC first
     match = None
-    if isrc_tag:
-        isrc_q = f'isrc:"{isrc_tag.strip()}"'
-        if PRINT_SEARCH_INFO:
-            logging.info("Attempting Spotify ISRC search: %s", isrc_q)
+    
+    # 1. ISRC exact strict query
+    if local_data["isrc_tag"]:
+        isrc_q = f'isrc:"{local_data["isrc_tag"].strip()}"'
         try:
-            j = spotifysearch(token, isrc_q, type_="track", limit=1)
-            if j:
+            j = await spotifysearch(session, semaphore, token, isrc_q, type_="track", limit=1, offset=0, market=MARKET)
+            if j and "error" not in j:
                 items = j.get("tracks", {}).get("items", [])
                 if items:
                     match = items[0]
+                    _debug_log([f"[{local_data['file_path'].name}]", f"  MATCH FOUND via ISRC: {local_data['isrc_tag']}"])
         except Exception:
-            match = None
+            pass
+            
+    # 2. ID3 Metadata search
+    if not match and local_data["id3_artist"] and local_data["id3_title"]:
+        artist_for_search = _strip_parentheses_with_feat(local_data["id3_artist"])
+        title_for_search = _strip_parentheses_with_feat(local_data["id3_title"])
+        album_for_search = _strip_parentheses_with_feat(local_data["id3_album"]) if local_data["id3_album"] else None
+        match = await spotify_find_best_match(session, semaphore, token, artist_for_search, album_for_search, title_for_search, combined_limit=SEARCH_CANDIDATE_LIMIT)
+
+    # 3. Filename parser search
+    if not match and local_data["fn_artist"] and local_data["fn_title"]:
+        artist_for_search = _strip_parentheses_with_feat(local_data["fn_artist"])
+        title_for_search = _strip_parentheses_with_feat(local_data["fn_title"])
+        match = await spotify_find_best_match(session, semaphore, token, artist_for_search, None, title_for_search, combined_limit=SEARCH_CANDIDATE_LIMIT)
 
     if not match:
-        match = spotify_find_best_match(token, artist_for_search, album_for_search, title_for_search, combined_limit=SEARCH_CANDIDATE_LIMIT)
+        logging.info("No Spotify match for: %s", local_data["file_path"].name)
+        return None
 
-    if not match:
-        logging.info("No Spotify match for: %s", file_path.name)
-        return False
+    metadata_map, image_url, artist_id, meta_artist = map_spotify_match_to_metadata(match, local_data["artist"], local_data["album"], local_data["title"], local_data["isrc_tag"])
 
-    metadata_map, image_url, artist_id, meta_artist = map_spotify_match_to_metadata(match, artist, album, title, isrc_tag)
-
-    # Optionally fetch genres via artist id
     if artist_id:
         try:
-            g = get_artist_genres(token, artist_id)
+            g = await get_artist_genres(session, token, artist_id)
             if g:
                 metadata_map["genre"] = "; ".join(g)
         except Exception:
             pass
 
-    # Create temp copy
+    image_bytes, mime = None, None
+    if image_url:
+        got = await download_image_bytes(session, image_url)
+        if got:
+            image_bytes, mime = got
+
+    return {
+        "file_path": local_data["file_path"],
+        "metadata_map": metadata_map,
+        "image_bytes": image_bytes,
+        "mime": mime,
+        "ext": local_data["ext"]
+    }
+
+
+def commit_tags_to_file(update_data: Dict[str, Any], output_dir: Optional[Path] = None) -> bool:
+    """
+    STAGE 3 (Sync): ThreadPool bound layer to write the updated tags to the disk without freezing the event loop.
+    Re-reads the mutagn audio object to avoid RAM exhaustion when processing thousands of files.
+    """
+    file_path = update_data["file_path"]
+    metadata_map = update_data["metadata_map"]
+    image_bytes = update_data["image_bytes"]
+    mime = update_data["mime"]
+    ext = update_data["ext"]
+
     temp_path = unique_temp_copy(file_path)
+    
     try:
-        # FLAC write
         if ext == ".flac":
             audio_tmp = FLAC(str(temp_path))
-            if audio_tmp.tags is None:
-                audio_tmp.tags = {}
+            if audio_tmp.tags is None: audio_tmp.tags = {}
             if OVERWRITE_TITLE_ARTIST_OR_ALBUM:
                 audio_tmp.tags["title"] = [metadata_map["title"]]
                 audio_tmp.tags["artist"] = [metadata_map["artist"]]
-                if metadata_map["album"]:
-                    audio_tmp.tags["album"] = [metadata_map["album"]]
+                if metadata_map["album"]: audio_tmp.tags["album"] = [metadata_map["album"]]
             else:
-                # set only if missing (keeps previous)
                 if not first_tag_generic(audio_tmp, audio_tmp.tags, "title") and metadata_map["title"]:
                     audio_tmp.tags["title"] = [metadata_map["title"]]
                 if not first_tag_generic(audio_tmp, audio_tmp.tags, "artist") and metadata_map["artist"]:
@@ -326,44 +305,31 @@ def process_single_file(file_path: Path, token: str, output_dir: Optional[Path] 
                 if metadata_map["album"] and not first_tag_generic(audio_tmp, audio_tmp.tags, "album"):
                     audio_tmp.tags["album"] = [metadata_map["album"]]
 
-            if metadata_map["date"]:
-                audio_tmp.tags["date"] = [metadata_map["date"]]
-            if metadata_map["track"]:
-                audio_tmp.tags["tracknumber"] = [metadata_map["track"]]
-            if metadata_map["disc"]:
-                audio_tmp.tags["discnumber"] = [metadata_map["disc"]]
+            if metadata_map["date"]: audio_tmp.tags["date"] = [metadata_map["date"]]
+            if metadata_map["track"]: audio_tmp.tags["tracknumber"] = [metadata_map["track"]]
+            if metadata_map["disc"]: audio_tmp.tags["discnumber"] = [metadata_map["disc"]]
             if metadata_map["genre"]:
                 set_genre_on_audio(file_path, audio_tmp, metadata_map["genre"].split("; ") if metadata_map["genre"] else [])
-            if image_url:
-                got = download_image_bytes(image_url)
-                if got:
-                    image_bytes, mime = got
-                    pic = Picture()
-                    pic.data = image_bytes
-                    pic.type = 3
-                    pic.mime = mime
-                    try:
-                        remove_existing_pictures_generic(file_path, audio_tmp)
-                    except Exception:
-                        pass
-                    try:
-                        audio_tmp.add_picture(pic)
-                    except Exception:
-                        pass
-            try:
-                audio_tmp.save()
+                
+            if image_bytes:
+                pic = Picture()
+                pic.data = image_bytes
+                pic.type = 3
+                pic.mime = mime
+                try: remove_existing_pictures_generic(file_path, audio_tmp)
+                except Exception: pass
+                try: audio_tmp.add_picture(pic)
+                except Exception: pass
+                
+            try: audio_tmp.save()
             except Exception:
-                try:
-                    audio_tmp.save(str(temp_path))
-                except Exception:
-                    pass
+                try: audio_tmp.save(str(temp_path))
+                except Exception: pass
 
-        # MP3 write
         elif ext == ".mp3":
-            try:
-                audio_tmp = ID3(str(temp_path))
-            except ID3NoHeaderError:
-                audio_tmp = ID3()
+            try: audio_tmp = ID3(str(temp_path))
+            except ID3NoHeaderError: audio_tmp = ID3()
+            
             if OVERWRITE_TITLE_ARTIST_OR_ALBUM:
                 audio_tmp.delall("TIT2"); audio_tmp.add(TIT2(encoding=3, text=metadata_map["title"]))
                 audio_tmp.delall("TPE1"); audio_tmp.add(TPE1(encoding=3, text=metadata_map["artist"]))
@@ -376,76 +342,46 @@ def process_single_file(file_path: Path, token: str, output_dir: Optional[Path] 
                     audio_tmp.delall("TPE1"); audio_tmp.add(TPE1(encoding=3, text=metadata_map["artist"]))
                 if metadata_map["album"] and not first_tag_generic(audio_tmp, audio_tmp, "album"):
                     audio_tmp.delall("TALB"); audio_tmp.add(TALB(encoding=3, text=metadata_map["album"]))
-            if metadata_map["date"]:
-                audio_tmp.delall("TDRC"); audio_tmp.add(TDRC(encoding=3, text=metadata_map["date"]))
-            if metadata_map["track"]:
-                audio_tmp.delall("TRCK"); audio_tmp.add(TRCK(encoding=3, text=metadata_map["track"]))
-            if metadata_map["disc"]:
-                audio_tmp.delall("TPOS"); audio_tmp.add(TPOS(encoding=3, text=metadata_map["disc"]))
-            if metadata_map["genre"]:
-                audio_tmp.delall("TCON"); audio_tmp.add(TCON(encoding=3, text=metadata_map["genre"]))
+                    
+            if metadata_map["date"]: audio_tmp.delall("TDRC"); audio_tmp.add(TDRC(encoding=3, text=metadata_map["date"]))
+            if metadata_map["track"]: audio_tmp.delall("TRCK"); audio_tmp.add(TRCK(encoding=3, text=metadata_map["track"]))
+            if metadata_map["disc"]: audio_tmp.delall("TPOS"); audio_tmp.add(TPOS(encoding=3, text=metadata_map["disc"]))
+            if metadata_map["genre"]: audio_tmp.delall("TCON"); audio_tmp.add(TCON(encoding=3, text=metadata_map["genre"]))
             if metadata_map["isrc"]:
-                try:
-                    audio_tmp.delall("TSRC"); audio_tmp.add(TSRC(encoding=3, text=metadata_map["isrc"]))
-                except Exception:
-                    pass
-            if image_url:
-                got = download_image_bytes(image_url)
-                if got:
-                    image_bytes, mime = got
-                    try:
-                        remove_existing_pictures_generic(file_path, audio_tmp)
-                    except Exception:
-                        pass
-                    try:
-                        audio_tmp.add(APIC(encoding=3, mime=mime, type=3, desc="Cover", data=image_bytes))
-                    except Exception:
-                        pass
-            try:
-                audio_tmp.save(str(temp_path))
+                try: audio_tmp.delall("TSRC"); audio_tmp.add(TSRC(encoding=3, text=metadata_map["isrc"]))
+                except Exception: pass
+                
+            if image_bytes:
+                try: remove_existing_pictures_generic(file_path, audio_tmp)
+                except Exception: pass
+                try: audio_tmp.add(APIC(encoding=3, mime=mime, type=3, desc="Cover", data=image_bytes))
+                except Exception: pass
+                
+            try: audio_tmp.save(str(temp_path))
             except Exception:
-                try:
-                    audio_tmp.save()
-                except Exception:
-                    pass
-
-        # WAV: delegate to wav_utils
-        elif ext == ".wav":
-            updated = wav_utils.finalize_wav_with_metadata(temp_path, image_url, metadata_map)
-            if not updated:
-                try:
-                    Path(temp_path).unlink(missing_ok=True)
-                except Exception:
-                    pass
-                return False
-
+                try: audio_tmp.save()
+                except Exception: pass
         else:
-            logging.info("Unsupported for write: %s", file_path.name)
             if Path(temp_path).exists():
-                try:
-                    Path(temp_path).unlink()
-                except Exception:
-                    pass
+                try: Path(temp_path).unlink()
+                except Exception: pass
             return False
 
-        # Determine destination
         dest_path = Path(output_dir) / file_path.name if output_dir else file_path
         try:
             dest_parent = dest_path.parent
             if not dest_parent.exists():
                 dest_parent.mkdir(parents=True, exist_ok=True)
-        except Exception:
-            pass
-
+        except Exception: pass
+        
         send_original_to_trash(file_path)
         shutil.move(str(temp_path), str(dest_path))
+        logging.info("Successfully updated tags for: %s", dest_path.name)
         return True
 
     except Exception as e:
         if Path(temp_path).exists():
-            try:
-                Path(temp_path).unlink()
-            except Exception:
-                pass
-        logging.error("Failed updating %s: %s", file_path.name, e)
+            try: Path(temp_path).unlink()
+            except Exception: pass
+        logging.error("Failed updating %s on disk: %s", file_path.name, e)
         return False

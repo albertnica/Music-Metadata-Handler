@@ -60,10 +60,7 @@ def _normalize_text_basic(s: Optional[str]) -> str:
     s = "".join(ch for ch in s if not unicodedata.combining(ch))
     s = re.sub(r"[()]+", " ", s)
     s = re.sub(r"\b(feat\.?|ft\.?)\b", " ", s, flags=re.IGNORECASE)
-    # Replace separators with spaces
-    s = re.sub(r"[-–—/\\_]", " ", s)
-    # Remove other punctuation directly (prevents V.A.N -> v a n)
-    s = re.sub(r"[^0-9a-zA-Z\s]", "", s)
+    s = re.sub(r"[^0-9a-zA-Z\s]", " ", s)
     s = re.sub(r"\s+", " ", s).strip().lower()
     return s
 
@@ -97,24 +94,24 @@ def _tokens_in_candidate(tokens: List[str], candidate_norm: str) -> bool:
 
 
 def _build_sanitized_query(n_artist: str, n_title: str, n_album: str, fielded: bool = True) -> str:
-    def quote_and_escape(s: str) -> str:
+    def sanitize(s: str) -> str:
         s2 = s.replace('"', ' ')
         s2 = re.sub(r'\s+', ' ', s2).strip()
-        return f'"{s2}"' if s2 else ''
+        return s2
+    
     if fielded and (n_artist or n_title or n_album):
         parts = []
         if n_title:
-            parts.append(f'track:{quote_and_escape(n_title)}')
+            parts.append(f'track:{sanitize(n_title)}')
         if n_artist:
-            parts.append(f'artist:{quote_and_escape(n_artist)}')
+            parts.append(f'artist:{sanitize(n_artist)}')
         if n_album:
-            parts.append(f'album:{quote_and_escape(n_album)}')
+            parts.append(f'album:{sanitize(n_album)}')
         return " ".join([p for p in parts if p])
+        
     parts = []
-    if n_artist:
-        parts.append(n_artist)
-    if n_title:
-        parts.append(n_title)
-    if n_album:
-        parts.append(n_album)
-    return " ".join(parts) if parts else '""'
+    if n_artist: parts.append(n_artist)
+    if n_title: parts.append(n_title)
+    if n_album: parts.append(n_album)
+    
+    return " ".join(parts) if parts else ''

@@ -1,12 +1,14 @@
 """
 modules/spotify_client.py
-Functions to obtain tokens and query the Spotify Web API.
+Gateway for interaction with the Spotify Web API.
+We centralize search and metadata retrieval logic here to decouple 
+the primary processing loop from HTTP request complexities.
+Now re-architected to use async I/O.
 """
 
 from typing import Optional, Tuple
-import base64
-import time
-import requests
+import asyncio
+import aiohttp
 import logging
 
 from config import *
@@ -22,78 +24,123 @@ from modules.search_utils import (
     _normalize_text_basic
 )
 
-def spotifysearch(token: str, q: str, type_: str = "track", limit: int = 20, offset: int = 0, market: Optional[str] = None) -> Optional[dict]:
+
+async def spotifysearch(session: aiohttp.ClientSession, semaphore: asyncio.Semaphore, token: str, q: str, type_: str = "track", limit: int = 20, offset: int = 0, market: Optional[str] = None) -> Optional[dict]:
     """
-    This wrapper sends a GET request to the configured search endpoint and
-    returns the parsed JSON response on success or `None` on error. It handles
-    network errors and basic 401/unauthorized checks.
+    Executes a search query against Spotify's catalog asynchronously.
     """
     headers = {"Authorization": f"Bearer {token}"}
     params = {"q": q, "type": type_, "limit": limit, "offset": offset}
     if market:
         params["market"] = market
-    try:
-        r = requests.get(SPOTIFY_SEARCH_URL, headers=headers, params=params, timeout=REQUEST_TIMEOUT)
-    except Exception:
-        return None
-    if r.status_code == 401 or not r.ok:
-        return None
-    try:
-        return r.json()
-    except Exception:
-        return None
+        
+    for attempt in range(4):
+        try:
+            async with semaphore:
+                async with session.get(SPOTIFY_SEARCH_URL, headers=headers, params=params) as r:
+                    if r.status in (401, 400):
+                        logging.debug("Spotify API rejected the request (%d).", r.status)
+                        return {"error": {"status": r.status}}
+                    if r.status == 429:
+                        wait_sec = int(r.headers.get("Retry-After", 2))
+                        logging.warning("Spotify Rate Limit 429! Waiting %d seconds...", wait_sec)
+                        await asyncio.sleep(wait_sec + 0.5)
+                        continue
+                    if not r.ok:
+                        return {"error": {"status": r.status}}
+                    return await r.json()
+        except Exception:
+            await asyncio.sleep(1)
+            
+    return None
 
 
-def spotify_get_artist_albums(token: str, artist_id: str, limit: int = SPOTIFY_MAX_LIMIT, offset: int = 0, market: Optional[str] = None) -> Optional[dict]:
+async def spotify_get_artist_albums(session: aiohttp.ClientSession, semaphore: asyncio.Semaphore, token: str, artist_id: str, limit: int = SPOTIFY_MAX_LIMIT, offset: int = 0, market: Optional[str] = None) -> Optional[dict]:
     """
-    Retrieve albums for a given artist using Spotify's artist albums endpoint.
-    """
-    headers = {"Authorization": f"Bearer {token}"}
-    params = {"limit": limit, "offset": offset}
-    if market:
-        params["market"] = market
-    try:
-        r = requests.get(SPOTIFY_ARTIST_ALBUMS_URL.format(artist_id), headers=headers, params=params, timeout=REQUEST_TIMEOUT)
-    except Exception:
-        return None
-    if not r.ok:
-        return None
-    try:
-        return r.json()
-    except Exception:
-        return None
-
-
-def spotify_get_album_tracks(token: str, album_id: str, limit: int = SPOTIFY_MAX_LIMIT, offset: int = 0, market: Optional[str] = None) -> Optional[dict]:
-    """
-    Retrieve tracks for a given album using Spotify's album tracks endpoint.
+    Retrieves all albums associated with a specific artist asynchronously.
+    Reason: Used in fallback search scenarios where direct track search 
+    failed but we have a confirmed artist identity.
     """
     headers = {"Authorization": f"Bearer {token}"}
     params = {"limit": limit, "offset": offset}
     if market:
         params["market"] = market
+        
     try:
-        r = requests.get(SPOTIFY_ALBUM_TRACKS_URL.format(album_id), headers=headers, params=params, timeout=REQUEST_TIMEOUT)
-    except Exception:
-        return None
-    if not r.ok:
-        return None
-    try:
-        return r.json()
+        async with semaphore:
+            async with session.get(SPOTIFY_ARTIST_ALBUMS_URL.format(artist_id), headers=headers, params=params) as r:
+                if r.status == 200:
+                    return await r.json()
+                return None
     except Exception:
         return None
 
 
-def spotify_find_best_match(token: str, artist: Optional[str], album: Optional[str], title: Optional[str],
-                            combined_limit: int = None) -> Optional[dict]:
+async def spotify_get_album_tracks(session: aiohttp.ClientSession, semaphore: asyncio.Semaphore, token: str, album_id: str, limit: int = SPOTIFY_MAX_LIMIT, offset: int = 0, market: Optional[str] = None) -> Optional[dict]:
     """
-    Find the best matching Spotify item for the given artist/album/title inputs.
+    Enumerates tracks within a specific album asynchronously.
+    """
+    headers = {"Authorization": f"Bearer {token}"}
+    params = {"limit": limit, "offset": offset}
+    if market:
+        params["market"] = market
+        
+    try:
+        async with semaphore:
+            async with session.get(SPOTIFY_ALBUM_TRACKS_URL.format(album_id), headers=headers, params=params) as r:
+                if r.status == 200:
+                    return await r.json()
+                return None
+    except Exception:
+        return None
 
-    The algorithm:
-    - Build a set of search queries (fielded queries first, then plain text).
-    - For each query, page through Spotify results up to `combined_limit`.
-    - Normalize candidate titles/artists/albums and apply token containment checks.
-    - Return the first accepted candidate (track or album depending on the query).
+
+
+def _debug_log(messages: list[str]):
+    if not messages:
+        return
+    from config import MAIN_DIR
+    log_path = MAIN_DIR / "spotify_search_debug.log"
+    try:
+        with open(log_path, "a", encoding="utf-8") as f:
+            f.write("\n" + "\n".join(messages) + "\n" + "-"*50 + "\n")
+    except:
+        pass
+
+
+def _score_candidate(artist_tokens, title_tokens, cand_artist_norm, cand_title, remixer_tokens=None) -> float:
+    cand_art_toks = set(cand_artist_norm.split())
+    cand_tit_toks = set(cand_title.split())
+    
+    local_art_toks = set(artist_tokens)
+    local_tit_toks = set(title_tokens)
+    
+    title_matches = len(local_tit_toks.intersection(cand_tit_toks))
+    artist_matches = len(local_art_toks.intersection(cand_art_toks))
+    
+    remixer_matches = 0
+    if remixer_tokens:
+        remixer_matches = len(set(remixer_tokens).intersection(cand_art_toks))
+        artist_matches += remixer_matches * 1.5
+
+    artist_penalty = len(cand_art_toks - local_art_toks) * 0.2
+    title_penalty = len(cand_tit_toks - local_tit_toks) * 0.1
+    missed_title = len(local_tit_toks - cand_tit_toks) * 0.5
+    missed_artist = len(local_art_toks - cand_art_toks) * 0.5
+
+    score = (title_matches * 2.0) + (artist_matches * 1.5) - artist_penalty - title_penalty - missed_title - missed_artist
+    
+    valid = (title_matches > 0)
+    if local_art_toks and artist_matches == 0 and remixer_matches == 0:
+        valid = False
+
+    return score if valid else -999.0
+
+
+async def spotify_find_best_match(session: aiohttp.ClientSession, semaphore: asyncio.Semaphore, token: str, artist: Optional[str], album: Optional[str], title: Optional[str], combined_limit: int = None) -> Optional[dict]:
+    """
+    Implements a robust scoring heuristic to find the most accurate 
+    Spotify metadata match, penalizing anomalies and accepting slight differences.
     """
     if combined_limit is None:
         combined_limit = SEARCH_CANDIDATE_LIMIT
@@ -104,13 +151,8 @@ def spotify_find_best_match(token: str, artist: Optional[str], album: Optional[s
 
     artist_tokens = _tokens(n_artist)
     title_tokens = _tokens(n_title)
-    album_tokens = _tokens(n_album)
     remixer_tokens = _extract_remixer_tokens_from_title(title or "")
 
-    if PRINT_SEARCH_INFO:
-        logging.info("Sanitized search input: artist='%s' | title='%s' | album='%s'", n_artist, n_title, n_album)
-
-    # Build queries: fielded first, then plain
     queries = []
     primary_q_fielded = _build_sanitized_query(n_artist, n_title, n_album, fielded=True)
     if primary_q_fielded:
@@ -118,39 +160,38 @@ def spotify_find_best_match(token: str, artist: Optional[str], album: Optional[s
     at_q_fielded = _build_sanitized_query(n_artist, n_title, "", fielded=True)
     if at_q_fielded and at_q_fielded != primary_q_fielded:
         queries.append(("track", at_q_fielded))
-    aa_q_fielded = _build_sanitized_query(n_artist, "", n_album, fielded=True)
-    if aa_q_fielded and aa_q_fielded not in (primary_q_fielded, at_q_fielded):
-        queries.append(("album", aa_q_fielded))
     t_q_fielded = _build_sanitized_query("", n_title, "", fielded=True)
-    if t_q_fielded and t_q_fielded not in (primary_q_fielded, at_q_fielded, aa_q_fielded):
+    if t_q_fielded and t_q_fielded not in (primary_q_fielded, at_q_fielded):
         queries.append(("track", t_q_fielded))
-    a_q_fielded = _build_sanitized_query("", "", n_album, fielded=True)
-    if a_q_fielded and a_q_fielded not in (primary_q_fielded, at_q_fielded, aa_q_fielded, t_q_fielded):
-        queries.append(("album", a_q_fielded))
-
     primary_q_plain = _build_sanitized_query(n_artist, n_title, n_album, fielded=False)
     if primary_q_plain and primary_q_plain not in (q for _, q in queries):
         queries.append(("track", primary_q_plain))
 
     seen_keys = set()
     overall_idx = 0
+    best_match = None
+    best_score = -999.0
+    
+    log_buffer = [f"[{title} | {artist}]", f"  Tokens -> Title: {title_tokens}, Artist: {artist_tokens}"]
 
     for (kind, q) in queries:
-        if PRINT_SEARCH_INFO:
-            logging.info("Query base: '%s' | type=%s | target=%d", q, kind, combined_limit)
+        log_buffer.append(f"  -> QUERY: '{q}' ({kind})")
         offset = 0
         while True:
             per_request = min(SPOTIFY_MAX_LIMIT, combined_limit - overall_idx)
             if per_request <= 0:
                 break
-            if PRINT_SEARCH_INFO:
-                logging.info("Searching Spotify: q='%s' type=%s limit=%d offset=%d market=%s", q, kind, per_request, offset, MARKET)
-            j = spotifysearch(token, q, type_=kind, limit=per_request, offset=offset, market=MARKET)
-            if not j:
+            
+            j = await spotifysearch(session, semaphore, token, q, type_=kind, limit=per_request, offset=offset, market=MARKET)
+            if not j or "error" in j:
+                log_buffer.append(f"     [!] API Error/Expired: {j.get('error') if j else 'None'}")
                 break
-            items = j.get((kind + "s") if kind in ("album", "track") else "tracks", {}).get("items", [])
+                
+            items = j.get("tracks", {}).get("items", [])
             if not isinstance(items, list) or not items:
+                log_buffer.append(f"     [?] 0 items returned")
                 break
+                
             for it in items:
                 it_id = it.get("id")
                 if it_id:
@@ -159,102 +200,46 @@ def spotify_find_best_match(token: str, artist: Optional[str], album: Optional[s
                     cand_title = _normalize_text_basic(it.get("name"))
                     cand_artists = " ".join(a.get("name", "") for a in it.get("artists", []))
                     cand_artist_norm = _normalize_artist_for_search(cand_artists)
-                    album_info = (it.get("album") or {}) if kind == "track" else it
-                    cand_album_name = _normalize_title_for_search((album_info.get("name") or ""))
-                    key = f"key:{cand_title}|{cand_artist_norm}|{cand_album_name}"
+                    key = f"key:{cand_title}|{cand_artist_norm}"
+                    
                 if key in seen_keys:
                     continue
+                    
                 overall_idx += 1
                 seen_keys.add(key)
-                if kind == "track":
-                    cand_title = _normalize_text_basic(it.get("name"))
-                    cand_artists = " ".join(a.get("name", "") for a in it.get("artists", []))
-                    cand_artist_norm = _normalize_artist_for_search(cand_artists)
-                    album_info = it.get("album", {}) or {}
-                    cand_album_name = _normalize_title_for_search(album_info.get("name"))
-                else:
-                    cand_title = _normalize_text_basic(it.get("name"))
-                    cand_artist_norm = _normalize_text_basic(" ".join(a.get("name", "") for a in it.get("artists", [])))
-                    cand_album_name = cand_title
-                if PRINT_SEARCH_INFO:
-                    logging.info("Candidate #%d: title='%s' | artist='%s' | album='%s'", overall_idx, cand_title, cand_artist_norm, cand_album_name)
-                title_ok = _tokens_in_candidate(title_tokens, cand_title)
-                artist_ok = (not artist_tokens) or _tokens_in_candidate(artist_tokens, cand_artist_norm) or (remixer_tokens and _tokens_in_candidate(remixer_tokens, cand_artist_norm))
-                album_ok = True
-                if album_tokens:
-                    album_ok = _tokens_in_candidate(album_tokens, cand_album_name)
-                accepted = bool(title_ok and artist_ok and album_ok)
-                if PRINT_SEARCH_INFO:
-                    logging.info("ACCEPTED" if accepted else "REJECTED")
-                if accepted:
-                    return it
+                
+                cand_title = _normalize_text_basic(it.get("name"))
+                cand_artists = " ".join(a.get("name", "") for a in it.get("artists", []))
+                cand_artist_norm = _normalize_artist_for_search(cand_artists)
+                
+                score = _score_candidate(artist_tokens, title_tokens, cand_artist_norm, cand_title, remixer_tokens)
+                log_buffer.append(f"     Candidate {overall_idx}: '{it.get('name')}' by '{cand_artists}' -> SCORE: {score:.2f}")
+                
+                if score > best_score and score > 0:
+                    best_score = score
+                    best_match = it
+                    
                 if overall_idx >= combined_limit:
                     break
+                    
             if overall_idx >= combined_limit:
                 break
             offset += per_request
             if len(items) < per_request:
                 break
+        
+        if best_match and best_score >= 2.0:
+            log_buffer.append(f"  MATCH FOUND: '{best_match.get('name')}' Score: {best_score:.2f}")
+            _debug_log(log_buffer)
+            return best_match
+            
         if overall_idx >= combined_limit:
             break
 
-    # Fallback: artist->albums->tracks exploration
-    if n_artist:
-        artist_search_q = f'artist:"{n_artist}"'
-        if PRINT_SEARCH_INFO:
-            logging.info("Fallback artist search: %s", artist_search_q)
-        artist_resp = spotifysearch(token, artist_search_q, type_="artist", limit=1, offset=0, market=MARKET)
-        artist_items = []
-        try:
-            artist_items = artist_resp.get("artists", {}).get("items", []) if artist_resp else []
-        except Exception:
-            artist_items = []
-        if artist_items:
-            artist_id = artist_items[0].get("id")
-            if PRINT_SEARCH_INFO:
-                logging.info("Found artist id=%s; enumerating albums", artist_id)
-            if artist_id:
-                a_off = 0
-                while True:
-                    a_resp = spotify_get_artist_albums(token, artist_id, limit=SPOTIFY_MAX_LIMIT, offset=a_off, market=MARKET)
-                    if not a_resp:
-                        break
-                    albums = a_resp.get("items", []) or []
-                    if not albums:
-                        break
-                    for alb in albums:
-                        alb_id = alb.get("id")
-                        if not alb_id:
-                            continue
-                        t_off = 0
-                        while True:
-                            t_resp = spotify_get_album_tracks(token, alb_id, limit=SPOTIFY_MAX_LIMIT, offset=t_off, market=MARKET)
-                            if not t_resp:
-                                break
-                            tracks = t_resp.get("items", []) or []
-                            if not tracks:
-                                break
-                            for tr in tracks:
-                                tr_id = tr.get("id")
-                                if tr_id and f"id:{tr_id}" in seen_keys:
-                                    continue
-                                it_like = {"id": tr.get("id"), "name": tr.get("name"), "artists": tr.get("artists", []), "album": {"name": alb.get("name")}}
-                                cand_title = _normalize_text_basic(it_like.get("name"))
-                                cand_artists = " ".join(a.get("name", "") for a in it_like.get("artists", []))
-                                cand_artist_norm = _normalize_artist_for_search(cand_artists)
-                                cand_album_name = _normalize_title_for_search(alb.get("name"))
-                                title_ok = _tokens_in_candidate(title_tokens, cand_title)
-                                artist_ok = (not artist_tokens) or _tokens_in_candidate(artist_tokens, cand_artist_norm) or (remixer_tokens and _tokens_in_candidate(remixer_tokens, cand_artist_norm))
-                                album_ok = True
-                                if album_tokens:
-                                    album_ok = _tokens_in_candidate(album_tokens, cand_album_name)
-                                if title_ok and artist_ok and album_ok:
-                                    return it_like
-                                seen_keys.add(f"id:{tr_id}" if tr_id else f"key:{cand_title}|{cand_artist_norm}|{cand_album_name}")
-                            if len(tracks) < SPOTIFY_MAX_LIMIT:
-                                break
-                            t_off += SPOTIFY_MAX_LIMIT
-                    if len(albums) < SPOTIFY_MAX_LIMIT:
-                        break
-                    a_off += SPOTIFY_MAX_LIMIT
-    return None
+    if best_match:
+        log_buffer.append(f"  MATCH FOUND (Fallback): '{best_match.get('name')}' Score: {best_score:.2f}")
+    else:
+        log_buffer.append("  NO MATCH FOUND.")
+        
+    _debug_log(log_buffer)
+    return best_match

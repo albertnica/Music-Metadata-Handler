@@ -53,6 +53,11 @@ def parse_args():
                         help="--input-path path: Override music_path from credentials.json with this path")
     parser.add_argument("--output-path", dest="output_path", type=str, default=None,
                         help="--output-path path: Directory to write outputs.")
+    parser.add_argument("--token", dest="token", type=str, default=None,
+                        help="--token string: Manual Spotify access token to use")
+
+    parser.add_argument("--print-search-info", dest="print_search_info", action="store_true", default=None,
+                        help="--print-search-info: Print extended search logs (overrides config.PRINT_SEARCH_INFO)")
 
     # Pass-through extra args to be tolerant
     return parser.parse_args()
@@ -76,7 +81,8 @@ def apply_cli_overrides_to_config(args):
     if getattr(args, "update_only_genre", False) is not None:
         config.UPDATE_ONLY_GENRE = int(bool(args.update_only_genre))
 
-    # Note: input_path is handled separately when reading credentials.json
+    if getattr(args, "print_search_info", None) is not None:
+        config.PRINT_SEARCH_INFO = int(bool(args.print_search_info))
 
 
 def main():
@@ -88,7 +94,6 @@ def main():
 
     # Now import modules that depend on config values
     try:
-        # Importing these after config overrides ensures modules read the updated config values
         from modules.core import iter_audio_files, get_creation_time
         from modules.processor import process_single_file
     except Exception as e:
@@ -99,8 +104,12 @@ def main():
     try:
         with config.CREDENTIALS_PATH.open("r", encoding="utf-8") as f:
             data = json.load(f)
-        client_id = str(data.get("client_id", "")).strip()
-        client_secret = str(data.get("client_secret", "")).strip()
+        
+        # Token: CLI override preferred; then credentials.json
+        spotify_token = args.token or data.get("spotify_access_token")
+        if not spotify_token:
+            logging.error("No Spotify access token found. Provide it in credentials.json or via --token.")
+            return
 
         # Input path: CLI override preferred; else credentials.json
         if args.input_path:
@@ -151,7 +160,8 @@ def main():
     for i, path in enumerate(paths, 1):
         try:
             logging.info("Processing (%d/%d): %s", i, len(paths), path.name)
-            ok = process_single_file(path, output_dir=OUTPUT_DIR)
+            # Pass the token to process_single_file
+            ok = process_single_file(path, token=spotify_token, output_dir=OUTPUT_DIR)
             if ok:
                 logging.info("Updated metadata for: %s (original moved to trash)", path.name)
                 updated += 1

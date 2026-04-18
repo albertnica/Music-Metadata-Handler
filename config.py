@@ -30,12 +30,16 @@ MARKET = None                         # set e.g. "US" or "ES" to restrict result
 
 # ----------------------------------------------------------------------------------
 
-# Deezer endpoints
-DEEZER_SEARCH_URL = "https://api.deezer.com/search"
+# Spotify endpoints
+SPOTIFY_TOKEN_URL =          "https://accounts.spotify.com/api/token"
+SPOTIFY_SEARCH_URL =         "https://api.spotify.com/v1/search"
+SPOTIFY_ARTIST_URL =         "https://api.spotify.com/v1/artists/{}"
+SPOTIFY_ARTIST_ALBUMS_URL =  "https://api.spotify.com/v1/artists/{}/albums"
+SPOTIFY_ALBUM_TRACKS_URL =   "https://api.spotify.com/v1/albums/{}/tracks"
 
 # Timeouts and limits
 REQUEST_TIMEOUT = 12
-DEEZER_MAX_LIMIT = 50
+SPOTIFY_MAX_LIMIT = 50
 
 # Logging configuration (basic)
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")

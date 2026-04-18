@@ -22,22 +22,6 @@ from modules.search_utils import (
     _normalize_text_basic
 )
 
-def get_spotify_token(client_id: str, client_secret: str, ttl_margin: int = 5) -> Tuple[str, int]:
-    """
-    Obtain an OAuth access token from Spotify using the Client Credentials flow.
-    """
-    auth = base64.b64encode(f"{client_id}:{client_secret}".encode("utf-8")).decode("ascii")
-    headers = {"Authorization": f"Basic {auth}"}
-    data = {"grant_type": "client_credentials"}
-    resp = requests.post(SPOTIFY_TOKEN_URL, headers=headers, data=data, timeout=REQUEST_TIMEOUT)
-    resp.raise_for_status()
-    j = resp.json()
-    token = j["access_token"]
-    expires_in = int(j.get("expires_in", 3600))
-    expires_at = int(time.time()) + expires_in - ttl_margin
-    return token, expires_at
-
-
 def spotifysearch(token: str, q: str, type_: str = "track", limit: int = 20, offset: int = 0, market: Optional[str] = None) -> Optional[dict]:
     """
     This wrapper sends a GET request to the configured search endpoint and

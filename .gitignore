@@ -1,4 +1,26 @@
+# Credentials & Private Paths
 credentials.json
-__pycache__
-.mypy_cache
-modules\__pycache__
+!credentials.example.json
+
+# Spotify Browser Profile, Sessions & Cookies
+data/spotify_chrome_profile/
+*chrome_profile*/
+data/spotify_cookies.json
+*cookies*.json
+*.session
+*.session-journal
+
+# Staging, Temporary Files & Diagnostic Logs
+spotify_search_debug.log
+*.log
+*.tmp
+*.temp
+
+# Python Virtual Environments & Bytecode
+__pycache__/
+**/__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/

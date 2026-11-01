@@ -1,0 +1,1913 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Music Metadata Studio — Local Library Sync</title>
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0%25' y1='0%25' x2='100%25' y2='100%25'%3E%3Cstop offset='0%25' stop-color='%2300ff87'/%3E%3Cstop offset='100%25' stop-color='%2360efff'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='32' height='32' rx='8' fill='url(%23g)'/%3E%3Cpath d='M21 7v12.5a3.5 3.5 0 1 1-2-3.163V10.5l-6 1.714V19.5a3.5 3.5 0 1 1-2-3.163V9.5l10-2.5z' fill='%23090D16'/%3E%3C/svg%3E">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg-dark: #080c14;
+      --bg-surface: rgba(15, 23, 42, 0.65);
+      --bg-surface-elevated: rgba(30, 41, 59, 0.7);
+      --border-glass: rgba(255, 255, 255, 0.08);
+      --border-hover: rgba(0, 255, 135, 0.35);
+      --border-active: rgba(0, 255, 135, 0.6);
+      --spotify-green: #00ff87;
+      --spotify-mint: #60efff;
+      --accent-purple: #a855f7;
+      --accent-danger: #f43f5e;
+      --accent-warn: #fbbf24;
+      --accent-cyan: #00d4ff;
+      --text-main: #f8fafc;
+      --text-muted: #94a3b8;
+      --text-dim: #64748b;
+      --radius-xl: 18px;
+      --radius-lg: 14px;
+      --radius-md: 10px;
+      --radius-sm: 6px;
+      --radius-pill: 9999px;
+      --glass-blur: blur(20px) saturate(160%);
+      --shadow-glass: 0 20px 40px -15px rgba(0, 0, 0, 0.7), 0 0 30px -10px rgba(0, 255, 135, 0.12);
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      background: radial-gradient(circle at 10% 10%, #0f1c2e 0%, #080c14 60%, #05070a 100%);
+      color: var(--text-main);
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      line-height: 1.5;
+      overflow-x: hidden;
+      padding-bottom: 140px; /* Generous breathing room for floating dock */
+    }
+
+    /* Top App Navigation */
+    header {
+      background: rgba(8, 12, 20, 0.85);
+      backdrop-filter: var(--glass-blur);
+      border-bottom: 1px solid var(--border-glass);
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      padding: 0.9rem 2.5rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 0.9rem;
+    }
+
+    .brand-icon {
+      width: 36px;
+      height: 36px;
+      background: linear-gradient(135deg, var(--spotify-green) 0%, var(--spotify-mint) 100%);
+      border-radius: var(--radius-md);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #080c14;
+      font-size: 1.15rem;
+      font-weight: 800;
+      box-shadow: 0 0 18px rgba(0, 255, 135, 0.45);
+    }
+
+    .brand-title {
+      font-size: 1.25rem;
+      font-weight: 800;
+      letter-spacing: -0.02em;
+      background: linear-gradient(135deg, #ffffff 40%, #cbd5e1 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .brand-subtitle {
+      font-size: 0.75rem;
+      color: var(--text-dim);
+      font-weight: 500;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+
+    .header-actions {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+    }
+
+    .engine-status-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid var(--border-glass);
+      padding: 0.35rem 0.85rem;
+      border-radius: var(--radius-pill);
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: var(--text-muted);
+    }
+
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--spotify-green);
+      box-shadow: 0 0 8px var(--spotify-green);
+      animation: pulse-dot 2s infinite ease-in-out;
+    }
+
+    .status-dot.busy {
+      background: var(--accent-warn);
+      box-shadow: 0 0 8px var(--accent-warn);
+    }
+
+    .btn-shutdown {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.45rem;
+      background: rgba(244, 63, 94, 0.1);
+      border: 1px solid rgba(244, 63, 94, 0.35);
+      color: #fda4af;
+      padding: 0.35rem 0.85rem;
+      border-radius: var(--radius-pill);
+      font-family: inherit;
+      font-size: 0.8rem;
+      font-weight: 700;
+      cursor: pointer;
+      transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    .btn-shutdown:hover {
+      background: rgba(244, 63, 94, 0.22);
+      border-color: rgba(244, 63, 94, 0.6);
+      color: #ffffff;
+      box-shadow: 0 0 14px rgba(244, 63, 94, 0.3);
+      transform: translateY(-1px);
+    }
+
+    @keyframes pulse-dot {
+      0%, 100% { transform: scale(1); opacity: 1; }
+      50% { transform: scale(1.2); opacity: 0.7; }
+    }
+
+    /* Main Container */
+    main {
+      max-width: 1400px;
+      width: 100%;
+      margin: 1.8rem auto 0;
+      padding: 0 1.5rem;
+      display: flex;
+      flex-direction: column;
+      gap: 1.5rem;
+    }
+
+    /* Glass Panels */
+    .glass-card {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-glass);
+      border-radius: var(--radius-xl);
+      padding: 1.5rem;
+      box-shadow: var(--shadow-glass);
+      backdrop-filter: var(--glass-blur);
+      transition: border-color 0.2s ease;
+    }
+
+    .card-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 1.2rem;
+    }
+
+    .card-title {
+      font-size: 1.05rem;
+      font-weight: 700;
+      letter-spacing: -0.01em;
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
+    }
+
+    /* Folder Selector Row */
+    .folder-input-row {
+      display: flex;
+      gap: 0.75rem;
+      align-items: center;
+      margin-bottom: 1.25rem;
+    }
+
+    .input-wrapper {
+      position: relative;
+      flex: 1;
+    }
+
+    .path-input {
+      width: 100%;
+      background: rgba(0, 0, 0, 0.45);
+      border: 1px solid var(--border-glass);
+      border-radius: var(--radius-lg);
+      padding: 0.85rem 1rem 0.85rem 2.6rem;
+      color: var(--text-main);
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.9rem;
+      outline: none;
+      transition: all 0.2s ease;
+    }
+
+    .path-input:focus {
+      border-color: var(--border-active);
+      box-shadow: 0 0 15px rgba(0, 255, 135, 0.2);
+    }
+
+    .input-icon {
+      position: absolute;
+      left: 1rem;
+      top: 50%;
+      transform: translateY(-50%);
+      color: var(--text-dim);
+      font-size: 1rem;
+    }
+
+    .btn-secondary {
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid var(--border-glass);
+      border-radius: var(--radius-lg);
+      color: var(--text-main);
+      padding: 0.85rem 1.4rem;
+      font-family: inherit;
+      font-size: 0.88rem;
+      font-weight: 600;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      transition: all 0.2s ease;
+      white-space: nowrap;
+    }
+
+    .btn-secondary:hover {
+      background: rgba(255, 255, 255, 0.12);
+      border-color: rgba(255, 255, 255, 0.2);
+      transform: translateY(-1px);
+    }
+
+    .btn-primary {
+      background: linear-gradient(135deg, var(--spotify-green) 0%, #00c96c 100%);
+      border: none;
+      border-radius: var(--radius-lg);
+      color: #080c14;
+      padding: 0.85rem 1.8rem;
+      font-family: inherit;
+      font-size: 0.92rem;
+      font-weight: 800;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.6rem;
+      transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+      box-shadow: 0 4px 18px rgba(0, 255, 135, 0.35);
+      white-space: nowrap;
+    }
+
+    .btn-primary:hover:not(:disabled) {
+      transform: translateY(-2px);
+      box-shadow: 0 6px 24px rgba(0, 255, 135, 0.5);
+    }
+
+    .btn-primary:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+      transform: none;
+    }
+
+    /* Filter Chips Bar */
+    .filter-section {
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+      border-top: 1px solid rgba(255, 255, 255, 0.05);
+      padding-top: 1.1rem;
+    }
+
+    .filter-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .filter-title {
+      font-size: 0.82rem;
+      font-weight: 700;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .toggle-recursive {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      font-size: 0.85rem;
+      color: var(--text-muted);
+      cursor: pointer;
+      user-select: none;
+    }
+
+    .parse-mode-select {
+      background: rgba(0, 0, 0, 0.45);
+      border: 1px solid var(--border-glass);
+      border-radius: var(--radius-sm);
+      color: var(--text-main);
+      padding: 0.25rem 0.6rem;
+      font-size: 0.8rem;
+      font-family: inherit;
+      outline: none;
+      cursor: pointer;
+      transition: border-color 0.15s ease;
+    }
+
+    .parse-mode-select:focus {
+      border-color: var(--border-active);
+    }
+
+    .criteria-chips-container {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+    }
+
+    .chip-btn {
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid var(--border-glass);
+      border-radius: var(--radius-pill);
+      padding: 0.45rem 1rem;
+      color: var(--text-muted);
+      font-size: 0.82rem;
+      font-weight: 600;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.45rem;
+      transition: all 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+      user-select: none;
+    }
+
+    .chip-btn:hover {
+      background: rgba(255, 255, 255, 0.09);
+      border-color: rgba(255, 255, 255, 0.18);
+      color: #ffffff;
+    }
+
+    .chip-btn.active {
+      background: rgba(0, 255, 135, 0.12);
+      border-color: rgba(0, 255, 135, 0.45);
+      color: var(--spotify-green);
+      box-shadow: 0 0 14px rgba(0, 255, 135, 0.2);
+    }
+
+    .chip-icon {
+      font-size: 0.95rem;
+    }
+
+    /* Summary Stats Grid */
+    .stats-bar {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 1rem;
+    }
+
+    .stat-box {
+      background: rgba(0, 0, 0, 0.35);
+      border: 1px solid var(--border-glass);
+      border-radius: var(--radius-lg);
+      padding: 1rem 1.25rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.3rem;
+    }
+
+    .stat-label {
+      font-size: 0.75rem;
+      font-weight: 600;
+      color: var(--text-dim);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+
+    .stat-value {
+      font-size: 1.5rem;
+      font-weight: 800;
+      font-family: 'JetBrains Mono', monospace;
+      color: #ffffff;
+    }
+
+    .stat-value.highlight {
+      color: var(--spotify-green);
+    }
+
+    /* Table Toolbar */
+    .table-toolbar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 1rem;
+      gap: 1rem;
+      flex-wrap: wrap;
+    }
+
+    .selection-controls {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .btn-micro {
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid var(--border-glass);
+      border-radius: var(--radius-sm);
+      color: var(--text-muted);
+      font-size: 0.78rem;
+      font-weight: 600;
+      padding: 0.35rem 0.75rem;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+
+    .btn-micro:hover {
+      background: rgba(255, 255, 255, 0.12);
+      color: #fff;
+    }
+
+    .search-filter-input {
+      background: rgba(0, 0, 0, 0.35);
+      border: 1px solid var(--border-glass);
+      border-radius: var(--radius-pill);
+      padding: 0.45rem 1rem 0.45rem 2.2rem;
+      color: var(--text-main);
+      font-size: 0.85rem;
+      outline: none;
+      width: 280px;
+      transition: all 0.2s;
+    }
+
+    .search-filter-input:focus {
+      border-color: var(--border-active);
+      width: 320px;
+    }
+
+    /* Track Review Table */
+    .table-container {
+      overflow-x: auto;
+      border: 1px solid var(--border-glass);
+      border-radius: var(--radius-lg);
+      background: rgba(0, 0, 0, 0.3);
+      max-height: 520px;
+      overflow-y: auto;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      text-align: left;
+      font-size: 0.88rem;
+    }
+
+    thead {
+      position: sticky;
+      top: 0;
+      background: rgba(15, 23, 42, 0.95);
+      backdrop-filter: var(--glass-blur);
+      z-index: 10;
+      border-bottom: 1px solid var(--border-glass);
+    }
+
+    th {
+      padding: 0.85rem 1rem;
+      font-size: 0.78rem;
+      font-weight: 700;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    td {
+      padding: 0.75rem 1rem;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+      vertical-align: middle;
+    }
+
+    tr:hover td {
+      background: rgba(255, 255, 255, 0.03);
+    }
+
+    tr.selected td {
+      background: rgba(0, 255, 135, 0.04);
+    }
+
+    /* Checkbox Styling */
+    input[type="checkbox"] {
+      appearance: none;
+      -webkit-appearance: none;
+      width: 18px;
+      height: 18px;
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      border-radius: 4px;
+      background: rgba(0, 0, 0, 0.3);
+      cursor: pointer;
+      display: inline-grid;
+      place-content: center;
+      transition: all 0.15s ease;
+    }
+
+    input[type="checkbox"]:checked {
+      background: var(--spotify-green);
+      border-color: var(--spotify-green);
+    }
+
+    input[type="checkbox"]:checked::before {
+      content: "✔";
+      font-size: 11px;
+      color: #080c14;
+      font-weight: 900;
+    }
+
+    /* Badges & Pills */
+    .format-badge {
+      display: inline-block;
+      font-size: 0.72rem;
+      font-weight: 800;
+      padding: 0.2rem 0.5rem;
+      border-radius: var(--radius-sm);
+      text-transform: uppercase;
+      font-family: 'JetBrains Mono', monospace;
+    }
+
+    .format-badge.flac {
+      background: rgba(168, 85, 247, 0.18);
+      color: #c084fc;
+      border: 1px solid rgba(168, 85, 247, 0.4);
+    }
+
+    .format-badge.mp3 {
+      background: rgba(56, 189, 248, 0.18);
+      color: #38bdf8;
+      border: 1px solid rgba(56, 189, 248, 0.4);
+    }
+
+    .cover-indicator {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 32px;
+      height: 32px;
+      border-radius: var(--radius-sm);
+      font-size: 0.85rem;
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid var(--border-glass);
+    }
+
+    .cover-indicator.has-art {
+      background: rgba(0, 255, 135, 0.12);
+      color: var(--spotify-green);
+      border-color: rgba(0, 255, 135, 0.3);
+    }
+
+    .cover-indicator.no-art {
+      background: rgba(244, 63, 94, 0.15);
+      color: var(--accent-danger);
+      border-color: rgba(244, 63, 94, 0.35);
+    }
+
+    .issue-tags-cell {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.35rem;
+    }
+
+    .issue-tag {
+      font-size: 0.72rem;
+      font-weight: 700;
+      padding: 0.15rem 0.5rem;
+      border-radius: var(--radius-pill);
+      white-space: nowrap;
+    }
+
+    .issue-tag.lack_cover {
+      background: rgba(244, 63, 94, 0.15);
+      color: #fda4af;
+      border: 1px solid rgba(244, 63, 94, 0.3);
+    }
+
+    .issue-tag.lack_title {
+      background: rgba(251, 191, 36, 0.15);
+      color: #fde68a;
+      border: 1px solid rgba(251, 191, 36, 0.3);
+    }
+
+    .issue-tag.lack_artist {
+      background: rgba(249, 115, 22, 0.15);
+      color: #fdba74;
+      border: 1px solid rgba(249, 115, 22, 0.3);
+    }
+
+    .issue-tag.lack_album {
+      background: rgba(168, 85, 247, 0.15);
+      color: #e9d5ff;
+      border: 1px solid rgba(168, 85, 247, 0.3);
+    }
+
+    .issue-tag.lack_date {
+      background: rgba(14, 165, 233, 0.15);
+      color: #bae6fd;
+      border: 1px solid rgba(14, 165, 233, 0.3);
+    }
+
+    .issue-tag.lack_genre {
+      background: rgba(20, 184, 166, 0.15);
+      color: #99f6e4;
+      border: 1px solid rgba(20, 184, 166, 0.3);
+    }
+
+    .issue-tag.clean {
+      background: rgba(0, 255, 135, 0.12);
+      color: var(--spotify-green);
+      border: 1px solid rgba(0, 255, 135, 0.3);
+    }
+
+    .track-primary {
+      font-weight: 600;
+      color: #ffffff;
+      display: block;
+    }
+
+    .track-secondary {
+      font-size: 0.78rem;
+      color: var(--text-dim);
+      display: block;
+    }
+
+    /* Floating Execution Dock */
+    .floating-dock {
+      position: fixed;
+      bottom: 1.25rem;
+      left: 50%;
+      transform: translateX(-50%);
+      width: calc(100% - 3rem);
+      max-width: 1360px;
+      background: rgba(10, 15, 24, 0.88);
+      backdrop-filter: var(--glass-blur);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: var(--radius-xl);
+      padding: 0.9rem 1.6rem;
+      box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.8), 0 0 30px rgba(0, 255, 135, 0.15);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1.5rem;
+      z-index: 90;
+      flex-wrap: wrap;
+    }
+
+    .dock-left {
+      display: flex;
+      align-items: center;
+      gap: 1.2rem;
+    }
+
+    .selection-counter {
+      font-size: 0.95rem;
+      font-weight: 700;
+      color: #ffffff;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .selection-number {
+      font-family: 'JetBrains Mono', monospace;
+      color: var(--spotify-green);
+      background: rgba(0, 255, 135, 0.1);
+      padding: 0.15rem 0.55rem;
+      border-radius: var(--radius-sm);
+    }
+
+    .dock-options {
+      display: flex;
+      align-items: center;
+      gap: 1.2rem;
+      font-size: 0.82rem;
+      color: var(--text-muted);
+    }
+
+    .dock-option-item {
+      display: flex;
+      align-items: center;
+      gap: 0.45rem;
+      cursor: pointer;
+      user-select: none;
+    }
+
+    .dock-right {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+    }
+
+    .btn-cancel {
+      background: rgba(244, 63, 94, 0.15);
+      border: 1px solid rgba(244, 63, 94, 0.4);
+      color: #fda4af;
+      padding: 0.75rem 1.2rem;
+      border-radius: var(--radius-lg);
+      font-weight: 700;
+      font-size: 0.85rem;
+      cursor: pointer;
+      display: none;
+      transition: all 0.2s;
+    }
+
+    .btn-cancel:hover {
+      background: rgba(244, 63, 94, 0.25);
+    }
+
+    /* Live Console Drawer */
+    .console-section {
+      margin-top: 0.5rem;
+    }
+
+    .console-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 0.75rem;
+    }
+
+    .console-title {
+      font-size: 0.88rem;
+      font-weight: 700;
+      color: var(--text-muted);
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .console-box {
+      background: #04060a;
+      border: 1px solid var(--border-glass);
+      border-radius: var(--radius-lg);
+      height: 220px;
+      overflow-y: auto;
+      padding: 1rem;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.82rem;
+      line-height: 1.6;
+      color: #e2e8f0;
+      box-shadow: inset 0 2px 8px rgba(0, 0, 0, 0.8);
+    }
+
+    .log-line {
+      display: flex;
+      gap: 0.6rem;
+      word-break: break-word;
+    }
+
+    .log-line.info { color: #cbd5e1; }
+    .log-line.success { color: var(--spotify-green); font-weight: 600; }
+    .log-line.warning { color: var(--accent-warn); }
+    .log-line.error { color: var(--accent-danger); font-weight: 700; }
+
+    .log-time {
+      color: var(--text-dim);
+      user-select: none;
+    }
+
+    /* Progress bar */
+    .progress-bar-container {
+      width: 100%;
+      height: 6px;
+      background: rgba(255, 255, 255, 0.06);
+      border-radius: var(--radius-pill);
+      overflow: hidden;
+      margin-top: 0.6rem;
+    }
+
+    .progress-bar-fill {
+      height: 100%;
+      width: 0%;
+      background: linear-gradient(90deg, var(--spotify-green) 0%, var(--spotify-mint) 100%);
+      transition: width 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+      box-shadow: 0 0 10px rgba(0, 255, 135, 0.5);
+    }
+
+    /* Empty State */
+    .empty-state {
+      padding: 3rem 1rem;
+      text-align: center;
+      color: var(--text-dim);
+    }
+
+    .empty-state-icon {
+      font-size: 2.5rem;
+      margin-bottom: 0.75rem;
+      opacity: 0.6;
+    }
+
+    /* Pre-Commit Confirmation Modal */
+    .modal-backdrop {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100vw;
+      height: 100vh;
+      background: rgba(4, 7, 13, 0.85);
+      backdrop-filter: blur(25px) saturate(180%);
+      z-index: 200;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 1.5rem;
+      opacity: 1;
+      visibility: visible;
+      transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    .modal-backdrop.hidden {
+      opacity: 0;
+      visibility: hidden;
+      pointer-events: none;
+    }
+
+    .modal-card {
+      background: rgba(14, 21, 35, 0.97);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: var(--radius-xl);
+      max-width: 1100px;
+      width: 100%;
+      max-height: 88vh;
+      display: flex;
+      flex-direction: column;
+      box-shadow: 0 30px 60px -15px rgba(0, 0, 0, 0.9), 0 0 40px rgba(0, 255, 135, 0.15);
+      animation: modal-pop 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    @keyframes modal-pop {
+      from { transform: scale(0.96); opacity: 0; }
+      to { transform: scale(1); opacity: 1; }
+    }
+
+    .modal-header {
+      padding: 1.4rem 1.8rem;
+      border-bottom: 1px solid var(--border-glass);
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 1rem;
+    }
+
+    .modal-title {
+      font-size: 1.25rem;
+      font-weight: 800;
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
+      color: #ffffff;
+    }
+
+    .badge-pending {
+      font-size: 0.75rem;
+      font-weight: 700;
+      background: rgba(0, 255, 135, 0.12);
+      color: var(--spotify-green);
+      border: 1px solid rgba(0, 255, 135, 0.35);
+      padding: 0.2rem 0.6rem;
+      border-radius: var(--radius-pill);
+      font-family: 'JetBrains Mono', monospace;
+    }
+
+    .modal-subtitle {
+      font-size: 0.85rem;
+      color: var(--text-muted);
+      margin-top: 0.25rem;
+    }
+
+    .modal-toolbar {
+      padding: 0.75rem 1.8rem;
+      background: rgba(0, 0, 0, 0.25);
+      border-bottom: 1px solid var(--border-glass);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .modal-body {
+      padding: 1.2rem 1.8rem;
+      overflow-y: auto;
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 0.85rem;
+    }
+
+    .review-card {
+      background: rgba(0, 0, 0, 0.35);
+      border: 1px solid var(--border-glass);
+      border-radius: var(--radius-lg);
+      padding: 1rem 1.25rem;
+      display: grid;
+      grid-template-columns: auto 64px 1fr 1fr;
+      align-items: center;
+      gap: 1.25rem;
+      transition: all 0.2s ease;
+    }
+
+    .review-card:hover {
+      background: rgba(255, 255, 255, 0.03);
+      border-color: rgba(255, 255, 255, 0.16);
+    }
+
+    .review-card.excluded {
+      opacity: 0.45;
+      filter: grayscale(0.6);
+    }
+
+    .review-art {
+      width: 64px;
+      height: 64px;
+      border-radius: var(--radius-md);
+      object-fit: cover;
+      background: #000;
+      border: 1px solid var(--border-glass);
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+    }
+
+    .review-art-placeholder {
+      width: 64px;
+      height: 64px;
+      border-radius: var(--radius-md);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid var(--border-glass);
+      font-size: 1.5rem;
+      color: var(--text-dim);
+    }
+
+    .diff-col {
+      display: flex;
+      flex-direction: column;
+      gap: 0.25rem;
+    }
+
+    .diff-heading {
+      font-size: 0.72rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .diff-heading.orig { color: var(--text-dim); }
+    .diff-heading.prop { color: var(--spotify-green); }
+
+    .diff-val-title {
+      font-size: 0.92rem;
+      font-weight: 700;
+      color: #ffffff;
+    }
+
+    .diff-val-sub {
+      font-size: 0.8rem;
+      color: var(--text-muted);
+    }
+
+    .modal-footer {
+      padding: 1.2rem 1.8rem;
+      border-top: 1px solid var(--border-glass);
+      background: rgba(10, 15, 24, 0.95);
+      display: flex;
+      justify-content: flex-end;
+      align-items: center;
+      gap: 1rem;
+      border-radius: 0 0 var(--radius-xl) var(--radius-xl);
+    }
+
+    @media (max-width: 900px) {
+      .floating-dock {
+        position: static;
+        transform: none;
+        width: 100%;
+        margin-top: 1rem;
+      }
+      body {
+        padding-bottom: 20px;
+      }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Top Navigation Header -->
+  <header>
+    <div class="brand">
+      <div class="brand-icon">♫</div>
+      <div>
+        <div class="brand-title">Music Metadata Studio</div>
+        <div class="brand-subtitle">Spotify Web Player Automation & Tag Synchronization</div>
+      </div>
+    </div>
+    <div class="header-actions">
+      <div class="engine-status-badge">
+        <span class="status-dot" id="engine-dot"></span>
+        <span id="engine-status-text">Ready</span>
+      </div>
+      <button type="button" class="btn-shutdown" onclick="shutdownServer()" title="Stop background server process">
+        <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M18.364 5.636a9 9 0 11-12.728 0M12 3v9" />
+        </svg>
+        <span>Stop Studio</span>
+      </button>
+    </div>
+  </header>
+
+  <main>
+    <!-- Library Scan Card -->
+    <div class="glass-card">
+      <div class="card-header">
+        <div class="card-title">
+          <span>📁 Library Directory & Criteria Filter</span>
+        </div>
+      </div>
+
+      <!-- Folder Selection Bar -->
+      <div class="folder-input-row">
+        <div class="input-wrapper">
+          <span class="input-icon">📂</span>
+          <input
+            type="text"
+            id="input-folder-path"
+            class="path-input"
+            placeholder="C:/"
+            autocomplete="off"
+            spellcheck="false"
+          />
+        </div>
+        <button type="button" class="btn-secondary" onclick="browseFolderNative()">
+          <span>Browse...</span>
+        </button>
+        <button type="button" class="btn-primary" id="btn-scan" onclick="triggerScan()">
+          <span>🔍 Scan Folder</span>
+        </button>
+      </div>
+
+      <!-- Fixing Criteria Filter Chips -->
+      <div class="filter-section">
+        <div class="filter-header">
+          <span class="filter-title">Fixing Criteria (Filter deficient tracks):</span>
+          <div style="display: flex; align-items: center; gap: 1.25rem; flex-wrap: wrap;">
+            <label class="toggle-recursive" title="How untagged filenames are split into Artist and Title">
+              <span style="font-size: 0.8rem; color: var(--text-muted); font-weight: 600;">Filename:</span>
+              <select id="sel-parse-mode" class="parse-mode-select" onchange="if(scannedTracks.length>0) triggerScan()">
+                <option value="0">Artist - Title (Default)</option>
+                <option value="1">Title - Artist</option>
+              </select>
+            </label>
+            <label class="toggle-recursive">
+              <input type="checkbox" id="chk-recursive" />
+              <span>Scan subfolders recursively</span>
+            </label>
+          </div>
+        </div>
+
+        <div class="criteria-chips-container" id="criteria-chips">
+          <button type="button" class="chip-btn active" data-criteria="all" onclick="toggleCriteria('all')">
+            <span class="chip-icon">✨</span>
+            <span>All Audio Files</span>
+          </button>
+          <button type="button" class="chip-btn" data-criteria="lack_cover" onclick="toggleCriteria('lack_cover')">
+            <span class="chip-icon">🖼️</span>
+            <span>Missing Cover Art</span>
+          </button>
+          <button type="button" class="chip-btn" data-criteria="lack_title" onclick="toggleCriteria('lack_title')">
+            <span class="chip-icon">🏷️</span>
+            <span>Missing Title</span>
+          </button>
+          <button type="button" class="chip-btn" data-criteria="lack_artist" onclick="toggleCriteria('lack_artist')">
+            <span class="chip-icon">🎤</span>
+            <span>Missing Artist</span>
+          </button>
+          <button type="button" class="chip-btn" data-criteria="lack_album" onclick="toggleCriteria('lack_album')">
+            <span class="chip-icon">💿</span>
+            <span>Missing Album</span>
+          </button>
+          <button type="button" class="chip-btn" data-criteria="lack_date" onclick="toggleCriteria('lack_date')">
+            <span class="chip-icon">📅</span>
+            <span>Missing Date</span>
+          </button>
+          <button type="button" class="chip-btn" data-criteria="lack_genre" onclick="toggleCriteria('lack_genre')">
+            <span class="chip-icon">🎸</span>
+            <span>Missing Genre</span>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Summary Stats Bar -->
+    <div class="stats-bar" id="stats-bar" style="display: none;">
+      <div class="stat-box">
+        <span class="stat-label">Files Scanned</span>
+        <span class="stat-value" id="stat-scanned">0</span>
+      </div>
+      <div class="stat-box">
+        <span class="stat-label">Matched Deficiencies</span>
+        <span class="stat-value highlight" id="stat-matched">0</span>
+      </div>
+      <div class="stat-box">
+        <span class="stat-label">FLAC Tracks</span>
+        <span class="stat-value" id="stat-flac">0</span>
+      </div>
+      <div class="stat-box">
+        <span class="stat-label">MP3 Tracks</span>
+        <span class="stat-value" id="stat-mp3">0</span>
+      </div>
+    </div>
+
+    <!-- Table Card -->
+    <div class="glass-card">
+      <div class="table-toolbar">
+        <div class="selection-controls">
+          <button type="button" class="btn-micro" onclick="selectAll(true)">Select All</button>
+          <button type="button" class="btn-micro" onclick="selectAll(false)">Select None</button>
+          <button type="button" class="btn-micro" onclick="invertSelection()">Invert</button>
+        </div>
+        <div class="input-wrapper">
+          <input
+            type="text"
+            id="table-search"
+            class="search-filter-input"
+            placeholder="Search tracks by title, artist, or file..."
+            oninput="filterTableRows()"
+          />
+        </div>
+      </div>
+
+      <div class="table-container">
+        <table>
+          <thead>
+            <tr>
+              <th style="width: 44px; text-align: center;">
+                <input type="checkbox" id="th-master-chk" onchange="toggleMasterCheckbox(this.checked)" />
+              </th>
+              <th style="width: 60px;">Fmt</th>
+              <th style="width: 60px; text-align: center;">Art</th>
+              <th>Track & Artist</th>
+              <th>Album</th>
+              <th>Identified Deficiencies</th>
+            </tr>
+          </thead>
+          <tbody id="track-table-body">
+            <tr>
+              <td colspan="6">
+                <div class="empty-state">
+                  <div class="empty-state-icon">🎧</div>
+                  <div>No directory scanned yet. Choose a folder above and click <b>Scan Folder</b>.</div>
+                </div>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Live Execution Console Section -->
+    <div class="glass-card console-section">
+      <div class="console-header">
+        <div class="console-title">
+          <span>⚡ Live Execution Console</span>
+          <span id="console-stage-badge" style="font-size: 0.75rem; color: var(--text-dim); margin-left: 0.5rem;">[Idle]</span>
+        </div>
+        <button type="button" class="btn-micro" onclick="clearConsole()">Clear Logs</button>
+      </div>
+      <div class="console-box" id="console-output">
+        <div class="log-line info">
+          <span class="log-time">[System]</span>
+          <span>Music Metadata Studio console ready. Select tracks and click "Fix Selected Tracks" to begin.</span>
+        </div>
+      </div>
+      <div class="progress-bar-container">
+        <div class="progress-bar-fill" id="progress-fill"></div>
+      </div>
+    </div>
+  </main>
+
+  <!-- Sticky Bottom Floating Action Dock -->
+  <div class="floating-dock">
+    <div class="dock-left">
+      <div class="selection-counter">
+        <span>Selected:</span>
+        <span class="selection-number" id="selected-count">0</span>
+        <span style="color: var(--text-dim); font-size: 0.85rem;" id="total-visible-count">/ 0 tracks</span>
+      </div>
+      <div class="dock-options">
+        <label class="dock-option-item" title="Review proposed Spotify metadata before writing changes to audio files">
+          <input type="checkbox" id="opt-require-review" checked />
+          <span style="color: var(--spotify-green); font-weight: 700;">Review Before Overwrite</span>
+        </label>
+        <label class="dock-option-item" title="Overwrite Title, Artist, and Album tags with canonical Spotify metadata">
+          <input type="checkbox" id="opt-overwrite-taa" checked />
+          <span>Overwrite Core Tags</span>
+        </label>
+        <label class="dock-option-item" title="Visit /album/{id} to extract full release date (YYYY-MM-DD) and track numbers">
+          <input type="checkbox" id="opt-scrape-album" checked />
+          <span>Scrape Album Page</span>
+        </label>
+        <label class="dock-option-item" title="Only update the Genre tag and keep existing artwork and tags untouched">
+          <input type="checkbox" id="opt-only-genre" />
+          <span>Genre Only</span>
+        </label>
+      </div>
+    </div>
+
+    <div class="dock-right">
+      <button type="button" class="btn-cancel" id="btn-cancel" onclick="cancelFixTask()">
+        <span>⏹ Cancel Task</span>
+      </button>
+      <button type="button" class="btn-primary" id="btn-fix" onclick="triggerFix()" disabled>
+        <span>⚡ Fix Selected Tracks</span>
+      </button>
+    </div>
+  </div>
+
+  <!-- Pre-Commit Review & Confirmation Modal -->
+  <div class="modal-backdrop hidden" id="review-modal">
+    <div class="modal-card">
+      <div class="modal-header">
+        <div>
+          <div class="modal-title">
+            <span>🛡️ Confirm Metadata Overwrites</span>
+            <span class="badge-pending" id="review-pending-badge">0 tracks staged</span>
+          </div>
+          <div class="modal-subtitle">
+            Inspect the proposed Spotify metadata below. Uncheck any tracks you do not want to overwrite on disk.
+          </div>
+        </div>
+        <button type="button" class="btn-micro" onclick="closeReviewModal(true)">✕ Close</button>
+      </div>
+
+      <div class="modal-toolbar">
+        <div class="selection-controls">
+          <button type="button" class="btn-micro" onclick="toggleAllReviews(true)">Approve All</button>
+          <button type="button" class="btn-micro" onclick="toggleAllReviews(false)">Approve None</button>
+        </div>
+        <div style="font-size: 0.85rem; color: var(--text-muted);">
+          Approved: <b id="approved-count" style="color: var(--spotify-green);">0</b> / <span id="review-total-count">0</span>
+        </div>
+      </div>
+
+      <div class="modal-body">
+        <div class="review-list" id="review-items-container">
+          <!-- Dynamically populated review cards -->
+        </div>
+      </div>
+
+      <div class="modal-footer">
+        <button type="button" class="btn-secondary" onclick="discardStagedReview()">
+          <span>❌ Discard Changes</span>
+        </button>
+        <button type="button" class="btn-primary" id="btn-confirm-commit" onclick="confirmCommitStaged()">
+          <span>💾 Confirm & Overwrite Tags (<span id="btn-commit-count">0</span>)</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // Global Application State
+    let activeCriteria = new Set(["all"]);
+    let scannedTracks = [];
+    let selectedFilePaths = new Set();
+    let isPipelineRunning = false;
+    let sseEventSource = null;
+
+    // Initialize application on load
+    document.addEventListener("DOMContentLoaded", async () => {
+      await fetchSystemStatus();
+      initEventStream();
+    });
+
+    // Fetch initial server status and default path from credentials.json
+    async function fetchSystemStatus() {
+      try {
+        const res = await fetch("/api/status");
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data.default_music_path && !document.getElementById("input-folder-path").value) {
+          document.getElementById("input-folder-path").value = data.default_music_path;
+        }
+        updateEngineBadge(data.is_running);
+      } catch (err) {
+        console.error("Failed fetching status:", err);
+      }
+    }
+
+    // Connect to Server-Sent Events stream
+    function initEventStream() {
+      if (sseEventSource) sseEventSource.close();
+      sseEventSource = new EventSource("/api/stream");
+
+      sseEventSource.addEventListener("connected", (e) => {
+        console.log("SSE stream connected.");
+      });
+
+      sseEventSource.addEventListener("log", (e) => {
+        const payload = JSON.parse(e.data);
+        appendConsoleLog(payload.message, payload.level || "info");
+      });
+
+      sseEventSource.addEventListener("progress", (e) => {
+        const payload = JSON.parse(e.data);
+        updateProgress(payload.current, payload.total, payload.stage, payload.file);
+      });
+
+      sseEventSource.addEventListener("complete", (e) => {
+        const summary = JSON.parse(e.data);
+        appendConsoleLog(`✨ Task complete! Updated: ${summary.updated}, Skipped: ${summary.skipped}, Failed: ${summary.failed}`, "success");
+        setRunningState(false);
+        updateProgress(1, 1, "done");
+      });
+
+      sseEventSource.addEventListener("review_ready", (e) => {
+        const payload = JSON.parse(e.data);
+        openReviewModal(payload.tracks || []);
+      });
+
+      sseEventSource.addEventListener("error", (e) => {
+        // SSE auto-reconnects
+      });
+    }
+
+    // Toggle criteria chips
+    function toggleCriteria(criteria) {
+      if (criteria === "all") {
+        activeCriteria.clear();
+        activeCriteria.add("all");
+      } else {
+        activeCriteria.delete("all");
+        if (activeCriteria.has(criteria)) {
+          activeCriteria.delete(criteria);
+        } else {
+          activeCriteria.add(criteria);
+        }
+        if (activeCriteria.size === 0) {
+          activeCriteria.add("all");
+        }
+      }
+
+      // Update UI button classes
+      document.querySelectorAll("#criteria-chips .chip-btn").forEach((btn) => {
+        const key = btn.getAttribute("data-criteria");
+        if (activeCriteria.has(key)) {
+          btn.classList.add("active");
+        } else {
+          btn.classList.remove("active");
+        }
+      });
+
+      // If tracks are already loaded, trigger re-scan or local filtering
+      if (scannedTracks.length > 0) {
+        triggerScan();
+      }
+    }
+
+    // Native Windows folder picker
+    async function browseFolderNative() {
+      try {
+        const res = await fetch("/api/browse-directory", { method: "POST" });
+        if (res.ok) {
+          const data = await res.json();
+          if (data.success && data.path) {
+            document.getElementById("input-folder-path").value = data.path;
+          }
+        }
+      } catch (err) {
+        console.error("Browse failed:", err);
+      }
+    }
+
+    // Trigger directory scan
+    async function triggerScan() {
+      const folderPath = document.getElementById("input-folder-path").value.trim();
+      if (!folderPath) {
+        alert("Please enter or browse to a valid music folder.");
+        return;
+      }
+
+      const recursive = document.getElementById("chk-recursive").checked;
+      const btnScan = document.getElementById("btn-scan");
+      btnScan.disabled = true;
+      btnScan.innerHTML = "<span>⏳ Scanning...</span>";
+
+      try {
+        const parseMode = parseInt(document.getElementById("sel-parse-mode") ? document.getElementById("sel-parse-mode").value : "0", 10);
+        const res = await fetch("/api/scan", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            folder_path: folderPath,
+            recursive: recursive,
+            criteria: Array.from(activeCriteria),
+            filename_parse_mode: parseMode,
+          }),
+        });
+
+        if (!res.ok) {
+          const err = await res.json();
+          alert(`Scan failed: ${err.detail || "Unknown error"}`);
+          return;
+        }
+
+        const data = await res.json();
+        scannedTracks = data.tracks || [];
+
+        // Render stats
+        document.getElementById("stats-bar").style.display = "grid";
+        document.getElementById("stat-scanned").textContent = data.total_scanned;
+        document.getElementById("stat-matched").textContent = data.total_matched;
+        document.getElementById("stat-flac").textContent = data.flac_count;
+        document.getElementById("stat-mp3").textContent = data.mp3_count;
+
+        // Auto-select all matched deficient tracks
+        selectedFilePaths.clear();
+        scannedTracks.forEach((t) => selectedFilePaths.add(t.file_path));
+
+        renderTable(scannedTracks);
+        updateSelectionCounter();
+        appendConsoleLog(`Discovered ${data.total_scanned} files (${data.total_matched} matching criteria).`, "info");
+      } catch (err) {
+        console.error("Scan error:", err);
+        alert(`Scan error: ${err.message}`);
+      } finally {
+        btnScan.disabled = false;
+        btnScan.innerHTML = "<span>🔍 Scan Folder</span>";
+      }
+    }
+
+    // Render table rows
+    function renderTable(tracks) {
+      const tbody = document.getElementById("track-table-body");
+      if (!tracks || tracks.length === 0) {
+        tbody.innerHTML = `
+          <tr>
+            <td colspan="6">
+              <div class="empty-state">
+                <div class="empty-state-icon">✅</div>
+                <div>No tracks match the selected deficiency criteria in this folder.</div>
+              </div>
+            </td>
+          </tr>
+        `;
+        return;
+      }
+
+      const rowsHtml = tracks.map((t, idx) => {
+        const isChecked = selectedFilePaths.has(t.file_path);
+        const formatBadge = t.ext === ".flac" ? `<span class="format-badge flac">FLAC</span>` : `<span class="format-badge mp3">MP3</span>`;
+        const artBadge = t.has_cover
+          ? `<span class="cover-indicator has-art" title="Embedded cover art detected">🖼️</span>`
+          : `<span class="cover-indicator no-art" title="No embedded cover art">⚠️</span>`;
+
+        let tagsHtml = "";
+        if (t.issues && t.issues.length > 0) {
+          tagsHtml = t.issues.map((iss) => {
+            const labels = {
+              lack_cover: "No Cover",
+              lack_title: "No Title",
+              lack_artist: "No Artist",
+              lack_album: "No Album",
+              lack_date: "No Date",
+              lack_genre: "No Genre",
+            };
+            return `<span class="issue-tag ${iss}">${labels[iss] || iss}</span>`;
+          }).join("");
+        } else {
+          tagsHtml = `<span class="issue-tag clean">Complete</span>`;
+        }
+
+        const displayTitle = t.title || t.fn_title || t.filename;
+        const displayArtist = t.artist || t.fn_artist || "Unknown Artist";
+        const displayAlbum = t.album || "<em style='color: var(--text-dim)'>Missing</em>";
+
+        return `
+          <tr class="${isChecked ? 'selected' : ''}" id="row-${idx}">
+            <td style="text-align: center;">
+              <input
+                type="checkbox"
+                class="row-chk"
+                data-path="${encodeURIComponent(t.file_path)}"
+                ${isChecked ? "checked" : ""}
+                onchange="toggleRowSelection('${encodeURIComponent(t.file_path)}', this.checked, ${idx})"
+              />
+            </td>
+            <td>${formatBadge}</td>
+            <td style="text-align: center;">${artBadge}</td>
+            <td>
+              <span class="track-primary">${escapeHtml(displayTitle)}</span>
+              <span class="track-secondary">${escapeHtml(displayArtist)} &bull; ${escapeHtml(t.rel_path)}</span>
+            </td>
+            <td><span class="track-secondary">${escapeHtml(displayAlbum)}</span></td>
+            <td><div class="issue-tags-cell">${tagsHtml}</div></td>
+          </tr>
+        `;
+      }).join("");
+
+      tbody.innerHTML = rowsHtml;
+      updateMasterCheckboxState();
+    }
+
+    // Toggle individual track checkbox
+    function toggleRowSelection(encodedPath, isChecked, rowIdx) {
+      const path = decodeURIComponent(encodedPath);
+      if (isChecked) {
+        selectedFilePaths.add(path);
+      } else {
+        selectedFilePaths.delete(path);
+      }
+      const row = document.getElementById(`row-${rowIdx}`);
+      if (row) {
+        if (isChecked) row.classList.add("selected");
+        else row.classList.remove("selected");
+      }
+      updateSelectionCounter();
+      updateMasterCheckboxState();
+    }
+
+    // Master table checkbox
+    function toggleMasterCheckbox(checked) {
+      selectAll(checked);
+    }
+
+    function selectAll(checked) {
+      const visibleCheckboxes = document.querySelectorAll(".row-chk");
+      visibleCheckboxes.forEach((chk) => {
+        chk.checked = checked;
+        const path = decodeURIComponent(chk.getAttribute("data-path"));
+        if (checked) selectedFilePaths.add(path);
+        else selectedFilePaths.delete(path);
+      });
+      document.querySelectorAll("#track-table-body tr").forEach((tr) => {
+        if (checked) tr.classList.add("selected");
+        else tr.classList.remove("selected");
+      });
+      updateSelectionCounter();
+      updateMasterCheckboxState();
+    }
+
+    function invertSelection() {
+      const visibleCheckboxes = document.querySelectorAll(".row-chk");
+      visibleCheckboxes.forEach((chk) => {
+        chk.checked = !chk.checked;
+        const path = decodeURIComponent(chk.getAttribute("data-path"));
+        if (chk.checked) selectedFilePaths.add(path);
+        else selectedFilePaths.delete(path);
+      });
+      document.querySelectorAll("#track-table-body tr").forEach((tr) => {
+        tr.classList.toggle("selected");
+      });
+      updateSelectionCounter();
+      updateMasterCheckboxState();
+    }
+
+    function updateMasterCheckboxState() {
+      const master = document.getElementById("th-master-chk");
+      const visibleCheckboxes = document.querySelectorAll(".row-chk");
+      if (visibleCheckboxes.length === 0) {
+        master.checked = false;
+        master.indeterminate = false;
+        return;
+      }
+      const checkedCount = Array.from(visibleCheckboxes).filter((c) => c.checked).length;
+      if (checkedCount === 0) {
+        master.checked = false;
+        master.indeterminate = false;
+      } else if (checkedCount === visibleCheckboxes.length) {
+        master.checked = true;
+        master.indeterminate = false;
+      } else {
+        master.checked = false;
+        master.indeterminate = true;
+      }
+    }
+
+    function updateSelectionCounter() {
+      const count = selectedFilePaths.size;
+      document.getElementById("selected-count").textContent = count;
+      document.getElementById("total-visible-count").textContent = `/ ${scannedTracks.length} tracks`;
+      const btnFix = document.getElementById("btn-fix");
+      btnFix.disabled = count === 0 || isPipelineRunning;
+    }
+
+    // Filter table rows by text input
+    function filterTableRows() {
+      const q = document.getElementById("table-search").value.toLowerCase().trim();
+      if (!q) {
+        renderTable(scannedTracks);
+        return;
+      }
+      const filtered = scannedTracks.filter((t) => {
+        return (
+          t.filename.toLowerCase().includes(q) ||
+          t.title.toLowerCase().includes(q) ||
+          t.artist.toLowerCase().includes(q) ||
+          t.album.toLowerCase().includes(q) ||
+          t.fn_title.toLowerCase().includes(q) ||
+          t.fn_artist.toLowerCase().includes(q)
+        );
+      });
+      renderTable(filtered);
+    }
+
+    // Trigger metadata fixing on selected files
+    async function triggerFix() {
+      if (selectedFilePaths.size === 0 || isPipelineRunning) return;
+
+      const filePaths = Array.from(selectedFilePaths);
+      const overwriteTaa = document.getElementById("opt-overwrite-taa").checked;
+      const scrapeAlbum = document.getElementById("opt-scrape-album").checked;
+      const onlyGenre = document.getElementById("opt-only-genre").checked;
+
+      setRunningState(true);
+      updateProgress(0, filePaths.length, "Starting...");
+      appendConsoleLog(`Launching Spotify sync for ${filePaths.length} tracks...`, "info");
+
+      try {
+        const parseMode = parseInt(document.getElementById("sel-parse-mode") ? document.getElementById("sel-parse-mode").value : "0", 10);
+        const requireReview = document.getElementById("opt-require-review") ? document.getElementById("opt-require-review").checked : true;
+        const res = await fetch("/api/fix", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            file_paths: filePaths,
+            overwrite_taa: overwriteTaa,
+            update_only_genre: onlyGenre,
+            scrape_album_details: scrapeAlbum,
+            filename_parse_mode: parseMode,
+            require_confirmation: requireReview,
+          }),
+        });
+
+        if (!res.ok) {
+          const err = await res.json();
+          alert(`Could not start fixing: ${err.detail || "Server error"}`);
+          setRunningState(false);
+        }
+      } catch (err) {
+        console.error("Fix error:", err);
+        alert(`Error triggering fix: ${err.message}`);
+        setRunningState(false);
+      }
+    }
+
+    // Cancel active task
+    async function cancelFixTask() {
+      try {
+        await fetch("/api/cancel", { method: "POST" });
+        appendConsoleLog("Cancellation request sent.", "warning");
+      } catch (err) {
+        console.error("Cancel failed:", err);
+      }
+    }
+
+    function setRunningState(running) {
+      isPipelineRunning = running;
+      document.getElementById("btn-fix").disabled = running || selectedFilePaths.size === 0;
+      document.getElementById("btn-scan").disabled = running;
+      document.getElementById("btn-cancel").style.display = running ? "inline-flex" : "none";
+      updateEngineBadge(running);
+    }
+
+    function updateEngineBadge(running) {
+      const dot = document.getElementById("engine-dot");
+      const label = document.getElementById("engine-status-text");
+      if (running) {
+        dot.className = "status-dot busy";
+        label.textContent = "Processing...";
+      } else {
+        dot.className = "status-dot";
+        label.textContent = "Ready";
+      }
+    }
+
+    function updateProgress(current, total, stage, filename) {
+      const fill = document.getElementById("progress-fill");
+      const pct = total > 0 ? Math.min(100, Math.round((current / total) * 100)) : 0;
+      fill.style.width = `${pct}%`;
+      const stageBadge = document.getElementById("console-stage-badge");
+      if (filename) {
+        stageBadge.textContent = `[${current}/${total}] ${filename}`;
+      } else {
+        stageBadge.textContent = `[${stage}] ${pct}%`;
+      }
+    }
+
+    function appendConsoleLog(message, level = "info") {
+      const consoleBox = document.getElementById("console-output");
+      const timeStr = new Date().toLocaleTimeString();
+      const line = document.createElement("div");
+      line.className = `log-line ${level}`;
+      line.innerHTML = `<span class="log-time">[${timeStr}]</span><span>${escapeHtml(message)}</span>`;
+      consoleBox.appendChild(line);
+      consoleBox.scrollTop = consoleBox.scrollHeight;
+    }
+
+    function clearConsole() {
+      const consoleBox = document.getElementById("console-output");
+      consoleBox.innerHTML = "";
+    }
+
+    async function shutdownServer() {
+      if (!confirm("Stop the background Music Metadata Studio server?")) return;
+      try {
+        await fetch("/api/shutdown", { method: "POST" });
+      } catch (_) {}
+      const dot = document.getElementById("engine-dot");
+      const label = document.getElementById("engine-status-text");
+      if (dot) {
+        dot.style.background = "#64748b";
+        dot.style.boxShadow = "none";
+        dot.style.animation = "none";
+      }
+      if (label) label.textContent = "Offline";
+      appendConsoleLog("[SERVER] Background server process terminated. You can safely close this browser window.", "warning");
+      alert("Music Metadata Studio server has stopped. You can close this browser tab.");
+    }
+
+    // Pre-Commit Confirmation & Review Modal Management
+    let stagedReviewItems = [];
+
+    function openReviewModal(tracks) {
+      stagedReviewItems = tracks || [];
+      document.getElementById("review-pending-badge").textContent = `${stagedReviewItems.length} tracks staged`;
+      document.getElementById("review-total-count").textContent = stagedReviewItems.length;
+      renderReviewCards();
+      document.getElementById("review-modal").classList.remove("hidden");
+      setRunningState(false);
+    }
+
+    function closeReviewModal(discard = false) {
+      document.getElementById("review-modal").classList.add("hidden");
+      if (discard) {
+        discardStagedReview();
+      }
+    }
+
+    function renderReviewCards() {
+      const container = document.getElementById("review-items-container");
+      if (!stagedReviewItems || stagedReviewItems.length === 0) {
+        container.innerHTML = `<div style="text-align: center; color: var(--text-dim); padding: 2rem;">No staged items.</div>`;
+        updateReviewCount();
+        return;
+      }
+
+      const html = stagedReviewItems.map((item, idx) => {
+        const artHtml = item.proposed.image_url
+          ? `<img src="${escapeHtml(item.proposed.image_url)}" class="review-art" alt="Cover" />`
+          : `<div class="review-art-placeholder">🖼️</div>`;
+
+        const isApproved = item.approved !== false;
+
+        const origTitle = item.original.title || "<i style='color:var(--text-dim)'>(empty)</i>";
+        const origArtist = item.original.artist || "<i style='color:var(--text-dim)'>(empty)</i>";
+        const origAlbum = item.original.album || "<i style='color:var(--text-dim)'>(empty)</i>";
+
+        const propTitle = item.proposed.title || item.filename;
+        const propArtist = item.proposed.artist || "Unknown Artist";
+        const propAlbum = item.proposed.album || "(Single / Unknown)";
+        const propDate = item.proposed.date ? ` • ${item.proposed.date}` : "";
+        const propGenre = item.proposed.genre ? ` • ${item.proposed.genre}` : "";
+
+        return `
+          <div class="review-card ${isApproved ? '' : 'excluded'}" id="review-card-${idx}">
+            <input
+              type="checkbox"
+              ${isApproved ? 'checked' : ''}
+              onchange="toggleReviewItem(${idx}, this.checked)"
+            />
+            ${artHtml}
+            <div class="diff-col">
+              <span class="diff-heading orig">Current File / Tags</span>
+              <span class="diff-val-title" style="color: var(--text-muted); font-size: 0.85rem;">${escapeHtml(origTitle)}</span>
+              <span class="diff-val-sub">${escapeHtml(origArtist)} • Album: ${escapeHtml(origAlbum)}</span>
+              <span class="diff-val-sub" style="font-family: monospace; font-size: 0.72rem;">${escapeHtml(item.filename)}</span>
+            </div>
+            <div class="diff-col">
+              <span class="diff-heading prop">✨ Proposed Spotify Metadata</span>
+              <span class="diff-val-title">${escapeHtml(propTitle)}</span>
+              <span class="diff-val-sub" style="color: var(--spotify-green); font-weight: 600;">${escapeHtml(propArtist)}</span>
+              <span class="diff-val-sub">${escapeHtml(propAlbum)}${escapeHtml(propDate)}${escapeHtml(propGenre)}</span>
+            </div>
+          </div>
+        `;
+      }).join("");
+
+      container.innerHTML = html;
+      updateReviewCount();
+    }
+
+    function toggleReviewItem(idx, checked) {
+      if (stagedReviewItems[idx]) {
+        stagedReviewItems[idx].approved = checked;
+      }
+      const card = document.getElementById(`review-card-${idx}`);
+      if (card) {
+        if (checked) card.classList.remove("excluded");
+        else card.classList.add("excluded");
+      }
+      updateReviewCount();
+    }
+
+    function toggleAllReviews(approved) {
+      stagedReviewItems.forEach((item, idx) => {
+        item.approved = approved;
+        const card = document.getElementById(`review-card-${idx}`);
+        if (card) {
+          const chk = card.querySelector("input[type='checkbox']");
+          if (chk) chk.checked = approved;
+          if (approved) card.classList.remove("excluded");
+          else card.classList.add("excluded");
+        }
+      });
+      updateReviewCount();
+    }
+
+    function updateReviewCount() {
+      const approvedCount = stagedReviewItems.filter(i => i.approved !== false).length;
+      document.getElementById("approved-count").textContent = approvedCount;
+      document.getElementById("btn-commit-count").textContent = approvedCount;
+      document.getElementById("btn-confirm-commit").disabled = approvedCount === 0;
+    }
+
+    async function confirmCommitStaged() {
+      const approvedPaths = stagedReviewItems
+        .filter(i => i.approved !== false)
+        .map(i => i.file_path);
+
+      if (approvedPaths.length === 0) return;
+
+      document.getElementById("review-modal").classList.add("hidden");
+      setRunningState(true);
+      appendConsoleLog(`Committing approved metadata to ${approvedPaths.length} audio file(s)...`, "info");
+
+      try {
+        const res = await fetch("/api/commit", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ approved_paths: approvedPaths }),
+        });
+
+        if (!res.ok) {
+          const err = await res.json();
+          alert(`Commit error: ${err.detail || "Server error"}`);
+          setRunningState(false);
+        }
+      } catch (err) {
+        console.error("Commit failed:", err);
+        alert(`Commit error: ${err.message}`);
+        setRunningState(false);
+      }
+    }
+
+    async function discardStagedReview() {
+      document.getElementById("review-modal").classList.add("hidden");
+      try {
+        await fetch("/api/discard", { method: "POST" });
+      } catch (_) {}
+      appendConsoleLog("Discarded staged updates. No files were modified.", "info");
+      setRunningState(false);
+    }
+
+    function escapeHtml(str) {
+      if (!str) return "";
+      return String(str)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+    }
+  </script>
+</body>
+</html>

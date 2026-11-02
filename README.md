@@ -58,14 +58,14 @@ Inspect side-by-side diffs (original tags vs. canonical Spotify tags) and 640x64
 ## 🚀 Quick Start (Windows)
 
 ### 1. Automated Setup
-Double-click [`setup.bat`](file:///c:/Users/alfa/Desktop/Scripts/Music-Metadata-Handler/setup.bat) or run in PowerShell:
+Double-click [`setup.bat`](setup.bat) or run in PowerShell:
 ```cmd
 setup.bat
 ```
 This script creates a Python virtual environment (`.venv`), upgrades `pip`, and installs all dependencies from `requirements.txt`.
 
 ### 2. Launching the Web Studio
-Double-click [`run_ui.bat`](file:///c:/Users/alfa/Desktop/Scripts/Music-Metadata-Handler/run_ui.bat) or run:
+Double-click [`run_ui.bat`](run_ui.bat) or run:
 ```cmd
 run_ui.bat
 ```
@@ -274,17 +274,17 @@ if result.get("success") and result.get("diff"):
 
 | Module | Description |
 | :--- | :--- |
-| [`ui_server.py`](file:///c:/Users/alfa/Desktop/Scripts/Music-Metadata-Handler/ui_server.py) | FastAPI application providing REST endpoints, SSE telemetry, staging queues, and pre-commit commit/discard handlers. |
-| [`templates/index.html`](file:///c:/Users/alfa/Desktop/Scripts/Music-Metadata-Handler/templates/index.html) | Glassmorphic frontend interface with interactive filter chips, live table rendering, and review confirmation modal. |
-| [`api.py`](file:///c:/Users/alfa/Desktop/Scripts/Music-Metadata-Handler/api.py) | Unified programmatic Python API class (`MusicMetadataStudio`) and JSON CLI entrypoint for subprocess integrations. |
-| [`main.py`](file:///c:/Users/alfa/Desktop/Scripts/Music-Metadata-Handler/main.py) | Batch CLI engine supporting multi-track processing, interactive `--confirm` prompts, and filter flags. |
-| [`config.py`](file:///c:/Users/alfa/Desktop/Scripts/Music-Metadata-Handler/config.py) | Central configuration constants, default paths (`C:/`), genre priority lists, and immutable `RuntimeConfig` builders. |
-| [`modules/scanner.py`](file:///c:/Users/alfa/Desktop/Scripts/Music-Metadata-Handler/modules/scanner.py) | Concurrent Mutagen reader for library audits, tag extraction, and deficiency classification (`lack_*`). |
-| [`modules/spotify_client.py`](file:///c:/Users/alfa/Desktop/Scripts/Music-Metadata-Handler/modules/spotify_client.py) | Selenium Chrome driver controller, single-roundtrip DOM track extraction, 640x640 CDN hash rewrite, and album scraping. |
-| [`modules/processor.py`](file:///c:/Users/alfa/Desktop/Scripts/Music-Metadata-Handler/modules/processor.py) | 3-stage execution pipeline (Local tag extraction $\to$ Spotify scraping $\to$ Staged commit). |
-| [`modules/tag_utils.py`](file:///c:/Users/alfa/Desktop/Scripts/Music-Metadata-Handler/modules/tag_utils.py) | Mutagen FLAC Vorbis picture block and MP3 ID3v2.4 APIC frame reader/writer. |
-| [`modules/filename_utils.py`](file:///c:/Users/alfa/Desktop/Scripts/Music-Metadata-Handler/modules/filename_utils.py) | Heuristic artist/title parsing, safe atomic temporary file creation, and Recycle Bin backup. |
-| [`modules/search_utils.py`](file:///c:/Users/alfa/Desktop/Scripts/Music-Metadata-Handler/modules/search_utils.py) | Text normalization, remix token extraction, query sanitation, and character cleaning. |
+| [`ui_server.py`](ui_server.py) | FastAPI application providing REST endpoints, SSE telemetry, staging queues, and pre-commit commit/discard handlers. |
+| [`templates/index.html`](templates/index.html) | Glassmorphic frontend interface with interactive filter chips, live table rendering, and review confirmation modal. |
+| [`api.py`](api.py) | Unified programmatic Python API class (`MusicMetadataStudio`) and JSON CLI entrypoint for subprocess integrations. |
+| [`main.py`](main.py) | Batch CLI engine supporting multi-track processing, interactive `--confirm` prompts, and filter flags. |
+| [`config.py`](config.py) | Central configuration constants, default paths (`C:/`), genre priority lists, and immutable `RuntimeConfig` builders. |
+| [`modules/scanner.py`](modules/scanner.py) | Concurrent Mutagen reader for library audits, tag extraction, and deficiency classification (`lack_*`). |
+| [`modules/spotify_client.py`](modules/spotify_client.py) | Selenium Chrome driver controller, single-roundtrip DOM track extraction, 640x640 CDN hash rewrite, and album scraping. |
+| [`modules/processor.py`](modules/processor.py) | 3-stage execution pipeline (Local tag extraction $\to$ Spotify scraping $\to$ Staged commit). |
+| [`modules/tag_utils.py`](modules/tag_utils.py) | Mutagen FLAC Vorbis picture block and MP3 ID3v2.4 APIC frame reader/writer. |
+| [`modules/filename_utils.py`](modules/filename_utils.py) | Heuristic artist/title parsing, safe atomic temporary file creation, and Recycle Bin backup. |
+| [`modules/search_utils.py`](modules/search_utils.py) | Text normalization, remix token extraction, query sanitation, and character cleaning. |
 
 ---
 

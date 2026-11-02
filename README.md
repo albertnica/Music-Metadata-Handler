@@ -1,4 +1,4 @@
-# 🎵 Music Metadata Studio
+# Music Metadata Studio
 
 A high-performance local audio metadata and cover art synchronization engine for `.flac` and `.mp3` files powered by **Spotify Web Player DOM automation** (`Selenium` + `Chrome`). It bypasses official Spotify Web API credentials, developer tokens, and rate limits completely, functioning with any free Spotify account.
 
@@ -6,7 +6,7 @@ Featuring both a modern **Glassmorphic Web Studio** and an automated **CLI / Sub
 
 ---
 
-## 📸 Interface Preview
+## Interface Preview
 
 ### Main Web Studio Dashboard
 Interactive directory browser, health criteria chips (`Missing Cover Art`, `Missing Title`, etc.), filename parse mode selector, and real-time SSE progress telemetry.
@@ -24,7 +24,7 @@ Inspect side-by-side diffs (original tags vs. canonical Spotify tags) and 640x64
 
 ---
 
-## ⚡ Key Capabilities
+## Key Capabilities
 
 - **Zero-API Spotify Web Scraping (`SpotifyWebScraper`)**:
   - Operates via persistent Chrome user profile (`data/spotify_chrome_profile/`) and cookies (`data/spotify_cookies.json`). Login once with any free Spotify account.
@@ -34,28 +34,28 @@ Inspect side-by-side diffs (original tags vs. canonical Spotify tags) and 640x64
   - Genre resolution powered by `data/genre_cache.json` and configurable genre priority tables.
   - **Bidirectional Title-Artist Heuristics**: Intelligently scores candidates even when files are named `Title - Artist` instead of `Artist - Title`.
 
-- **🛡️ Pre-Commit Confirmation & Staging**:
+- **Pre-Commit Confirmation & Staging**:
   - **Web Studio**: When *Review Before Overwrite* is enabled (default), matches are staged in RAM. The visual review modal displays original vs. proposed tags and artwork previews with per-track approval toggles. Unapproved files remain untouched.
   - **CLI**: Interactive summary confirmation prompt (`--confirm`) displays planned mutations before Stage 3 begins. Use `-y` / `--yes` for automated headless scripts.
 
-- **🎨 Modern Glassmorphic Web Studio (`ui_server.py`)**:
+- **Modern Glassmorphic Web Studio (`ui_server.py`)**:
   - Fast single-page application served locally via FastAPI and Uvicorn.
   - Deficiency filter chips: filter tracks by `Missing Cover Art`, `Missing Title`, `Missing Artist`, `Missing Album`, `Missing Date`, or `Missing Genre`.
   - Windows native directory picker integration.
   - Real-time Server-Sent Events (SSE) log console and live progress bars.
   - Dedicated one-click **Stop Studio** button to safely kill background server processes.
 
-- **🐍 Unified Programmatic API & CLI Interface (`api.py`)**:
+- **Unified Programmatic API & CLI Interface (`api.py`)**:
   - `MusicMetadataStudio` Python class for clean programmatic usage.
   - JSON-ready CLI commands (`scan`, `inspect`, `sync --json`) designed for subprocessing from external orchestrators (Python, Node.js, Electron, Go).
 
-- **🔒 Safe Atomic File Staging**:
+- **Safe Atomic File Staging**:
   - Copy-on-write tagging using temporary files (`tempfile.mkstemp`).
   - Original files are safely moved to the OS Recycle Bin via `send2trash` (no destructive unrecoverable deletes).
 
 ---
 
-## 🚀 Quick Start (Windows)
+## Quick Start (Windows)
 
 ### 1. Automated Setup
 Double-click [`setup.bat`](setup.bat) or run in PowerShell:
@@ -73,7 +73,7 @@ The server will start at `http://127.0.0.1:8484` and open automatically in your 
 
 ---
 
-## 📦 Manual Installation
+## Manual Installation
 
 ```bash
 # Clone the repository
@@ -90,7 +90,7 @@ pip install -r requirements.txt
 
 ---
 
-## ⚙️ Configuration & First-Time Login
+## Configuration & First-Time Login
 
 ### 1. Default Library Path
 The application defaults to `C:/` out of the box. You can customize the default music path by creating `credentials.json` from the provided template:
@@ -112,7 +112,7 @@ On your very first run, Chrome will launch `https://open.spotify.com`. Log in on
 
 ---
 
-## 🖥️ Web Studio Guide
+## Web Studio Guide
 
 1. **Select Library**: Type your music folder path (default: `C:/`) or click **Browse...** to pick a folder.
 2. **Filter Deficiencies**: Click criteria chips (`Missing Cover Art`, `Missing Title`, etc.) to isolate tracks requiring repair.
@@ -128,7 +128,7 @@ On your very first run, Chrome will launch `https://open.spotify.com`. Log in on
 
 ---
 
-## 💻 CLI Usage (`main.py`)
+## CLI Usage (`main.py`)
 
 Run batch repairs directly from your terminal:
 
@@ -159,7 +159,7 @@ python main.py --input-path "C:/Music" --process-top-x 25 --filename-mode 1 -y
 
 ---
 
-## 🔌 Programmatic Python API & Subprocess Interface (`api.py`)
+## Programmatic Python API & Subprocess Interface (`api.py`)
 
 `api.py` provides a unified interface for programmatic interaction and external process integration.
 
@@ -270,7 +270,7 @@ if result.get("success") and result.get("diff"):
 
 ---
 
-## 📂 Architecture Overview
+## Architecture Overview
 
 | Module | Description |
 | :--- | :--- |
@@ -288,7 +288,7 @@ if result.get("success") and result.get("diff"):
 
 ---
 
-## 🔒 Security & Privacy
+## Security & Privacy
 
 - **No Hardcoded Credentials**: API tokens, personal paths, and passwords are never stored in version control.
 - **Protected Session Data**: The `.gitignore` file strictly excludes:
@@ -300,5 +300,5 @@ if result.get("success") and result.get("diff"):
 
 ---
 
-## 📄 License
+## License
 This project is licensed under the MIT License. See `LICENSE` for details.
